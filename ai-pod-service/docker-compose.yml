@@ -1,0 +1,35 @@
+services:
+  faster-qwen3-tts:
+    image: registry.lazycat.cloud/x/faster-qwen3-tts:0.6b-custom-openai-orin-v1
+    environment:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HOME: /root/.cache/huggingface
+      XDG_CACHE_HOME: /root/.cache
+      QWEN_TTS_MODEL: /opt/models/Qwen3-TTS-12Hz-0.6B-CustomVoice
+      QWEN_TTS_MODE: custom
+      QWEN_TTS_DEFAULT_VOICE: vivian
+      QWEN_TTS_LANGUAGE: Auto
+      QWEN_TTS_CHUNK_SIZE: "8"
+      QWEN_TTS_WARMUP_MAX_NEW_TOKENS: "32"
+    volumes:
+      - /etc/timezone:/etc/timezone:ro
+      - ${LZC_AGENT_CACHE_DIR}/cache:/root/.cache
+      - ${LZC_AGENT_DATA_DIR}/data:/data
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.${LZC_SERVICE_ID}-qwen3tts.rule=Host(`qwen3tts-ai`)"
+    expose:
+      - 8000
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 30s
+      timeout: 5s
+      retries: 100
+      start_period: 1s
+
+networks:
+  default:
+    external: true
+    name: traefik-shared-network
+

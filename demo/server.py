@@ -41,7 +41,13 @@ except ImportError:
     print("Install with:  pip install -e .  (from the repo root)")
     sys.exit(1)
 
-from nano_parakeet import from_pretrained as _parakeet_from_pretrained
+try:
+    from nano_parakeet import from_pretrained as _parakeet_from_pretrained
+except Exception as exc:
+    _parakeet_from_pretrained = None
+    _PARAKEET_IMPORT_ERROR = exc
+else:
+    _PARAKEET_IMPORT_ERROR = None
 
 
 _ALL_MODELS = [
@@ -79,9 +85,17 @@ _PRESET_REMOTE = {
 _TRANSCRIPT_REMOTE = f"{_GITHUB_RAW}/samples/parity/icl_transcripts.txt"
 
 
+def _env_flag(name: str) -> bool:
+    value = os.environ.get(name, "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _fetch_preset_assets() -> None:
     """Download preset wav files and transcripts from GitHub if not present locally."""
     import urllib.request
+    if _env_flag("HF_HUB_OFFLINE") or _env_flag("TRANSFORMERS_OFFLINE") or _env_flag("DEMO_PRESET_FETCH_DISABLED"):
+        print("Preset asset fetch disabled; skipping remote sample downloads.")
+        return
     _ASSET_DIR.mkdir(parents=True, exist_ok=True)
     PRESET_TRANSCRIPTS.parent.mkdir(parents=True, exist_ok=True)
     if not PRESET_TRANSCRIPTS.exists():
@@ -691,9 +705,17 @@ def main():
         _prime_preset_voice_cache(_startup_model)
         print("TTS model ready.")
 
-        print("Loading transcription model (nano-parakeet)…")
-        _parakeet = _parakeet_from_pretrained(device="cuda")
-        print("Transcription model ready.")
+        if _parakeet_from_pretrained is None:
+            print(f"Transcription model unavailable: {_PARAKEET_IMPORT_ERROR}")
+        elif _env_flag("HF_HUB_OFFLINE") or _env_flag("TRANSFORMERS_OFFLINE") or _env_flag("DEMO_DISABLE_TRANSCRIPTION"):
+            print("Transcription model preload disabled.")
+        else:
+            print("Loading transcription model (nano-parakeet)…")
+            try:
+                _parakeet = _parakeet_from_pretrained(device="cuda")
+                print("Transcription model ready.")
+            except Exception as exc:
+                print(f"Warning: transcription model unavailable: {exc}")
 
         print(f"Ready. Open http://localhost:{args.port}")
 

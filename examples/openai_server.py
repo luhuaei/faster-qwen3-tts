@@ -31,7 +31,7 @@ Voices config (voices.json):
 API usage:
     curl -s http://localhost:8000/v1/audio/speech \\
         -H "Content-Type: application/json" \\
-        -d '{"model": "tts-1", "input": "Hello!", "voice": "alloy", "response_format": "wav"}' \\
+        -d '{"model": "tts-1", "input": "Hello!", "voice": "alloy", "response_format": "wav", "instruct": "Speak gently with a relaxed cadence."}' \\
         --output speech.wav
 """
 import argparse
@@ -44,6 +44,7 @@ import queue
 import struct
 import sys
 import threading
+import time
 from typing import AsyncGenerator, Optional
 
 import numpy as np
@@ -67,8 +68,16 @@ app = FastAPI(title="faster-qwen3-tts OpenAI-compatible API")
 tts_model = None
 voices: dict = {}
 default_voice: Optional[str] = None
+generation_mode = "clone"
 SAMPLE_RATE = 24000  # updated once the model loads
 _model_lock = threading.Lock()  # prevent concurrent GPU inference
+startup_warmup_enabled = True
+startup_warmup_completed = False
+startup_warmup_seconds: Optional[float] = None
+
+def _is_ready() -> bool:
+    return tts_model is not None and (not startup_warmup_enabled or startup_warmup_completed)
+
 
 # ---------------------------------------------------------------------------
 # Request / response models
@@ -81,6 +90,8 @@ class SpeechRequest(BaseModel):
     voice: str = "alloy"
     response_format: str = "wav"  # wav | pcm | mp3
     speed: float = 1.0           # accepted but not yet applied
+    instruct: Optional[str] = None
+    language: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +179,24 @@ def resolve_voice(voice_name: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-async def _stream_chunks(voice_cfg: dict, text: str) -> AsyncGenerator[bytes, None]:
+def _resolve_instruct(voice_cfg: dict, request_instruct: Optional[str]) -> Optional[str]:
+    if request_instruct is None:
+        return voice_cfg.get("instruct")
+    return request_instruct
+
+
+def _resolve_language(voice_cfg: dict, request_language: Optional[str]) -> str:
+    if request_language is None:
+        return voice_cfg.get("language", "Auto")
+    return request_language
+
+
+async def _stream_chunks(
+    voice_cfg: dict,
+    text: str,
+    request_instruct: Optional[str],
+    request_language: Optional[str],
+) -> AsyncGenerator[bytes, None]:
     """
     Run generate_voice_clone_streaming in a background thread and yield
     raw PCM bytes for each chunk as they arrive.
@@ -179,14 +207,28 @@ async def _stream_chunks(voice_cfg: dict, text: str) -> AsyncGenerator[bytes, No
     def producer():
         try:
             with _model_lock:
-                for chunk, _sr, _timing in tts_model.generate_voice_clone_streaming(
-                    text=text,
-                    language=voice_cfg.get("language", "Auto"),
-                    ref_audio=voice_cfg["ref_audio"],
-                    ref_text=voice_cfg.get("ref_text", ""),
-                    chunk_size=voice_cfg.get("chunk_size", 12),
-                    non_streaming_mode=False,
-                ):
+                if generation_mode == "clone":
+                    generator = tts_model.generate_voice_clone_streaming(
+                        text=text,
+                        language=_resolve_language(voice_cfg, request_language),
+                        ref_audio=voice_cfg["ref_audio"],
+                        ref_text=voice_cfg.get("ref_text", ""),
+                        chunk_size=voice_cfg.get("chunk_size", 12),
+                        instruct=_resolve_instruct(voice_cfg, request_instruct),
+                        non_streaming_mode=False,
+                    )
+                elif generation_mode == "custom":
+                    generator = tts_model.generate_custom_voice_streaming(
+                        text=text,
+                        speaker=voice_cfg.get("speaker", ""),
+                        language=_resolve_language(voice_cfg, request_language),
+                        instruct=_resolve_instruct(voice_cfg, request_instruct),
+                        chunk_size=voice_cfg.get("chunk_size", 12),
+                    )
+                else:
+                    raise RuntimeError(f"Unsupported generation mode: {generation_mode}")
+
+                for chunk, _sr, _timing in generator:
                     q.put(chunk)
         except Exception as exc:
             q.put(exc)
@@ -213,7 +255,21 @@ async def _stream_chunks(voice_cfg: dict, text: str) -> AsyncGenerator[bytes, No
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "model_loaded": tts_model is not None}
+    return {
+        "status": "ok" if _is_ready() else "starting",
+        "ready": _is_ready(),
+        "model_loaded": tts_model is not None,
+        "mode": generation_mode,
+        "voices": list(voices.keys()),
+        "startup_warmup_enabled": startup_warmup_enabled,
+        "startup_warmup_completed": startup_warmup_completed,
+        "startup_warmup_seconds": startup_warmup_seconds,
+    }
+
+
+@app.get("/v1/audio/voices")
+async def list_voices():
+    return {"voices": list(voices.keys()), "default_voice": default_voice, "mode": generation_mode}
 
 
 @app.post("/v1/audio/speech")
@@ -244,12 +300,22 @@ async def create_speech(req: SpeechRequest):
 
         def _generate():
             with _model_lock:
-                return tts_model.generate_voice_clone(
-                    text=req.input,
-                    language=voice_cfg.get("language", "Auto"),
-                    ref_audio=voice_cfg["ref_audio"],
-                    ref_text=voice_cfg.get("ref_text", ""),
-                )
+                if generation_mode == "clone":
+                    return tts_model.generate_voice_clone(
+                        text=req.input,
+                        language=_resolve_language(voice_cfg, req.language),
+                        ref_audio=voice_cfg["ref_audio"],
+                        ref_text=voice_cfg.get("ref_text", ""),
+                        instruct=_resolve_instruct(voice_cfg, req.instruct),
+                    )
+                if generation_mode == "custom":
+                    return tts_model.generate_custom_voice(
+                        text=req.input,
+                        speaker=voice_cfg.get("speaker", ""),
+                        language=_resolve_language(voice_cfg, req.language),
+                        instruct=_resolve_instruct(voice_cfg, req.instruct),
+                    )
+                raise RuntimeError(f"Unsupported generation mode: {generation_mode}")
 
         audio_arrays, sr = await loop.run_in_executor(None, _generate)
         audio = audio_arrays[0] if audio_arrays else np.zeros(1, dtype=np.float32)
@@ -259,7 +325,7 @@ async def create_speech(req: SpeechRequest):
     async def audio_stream():
         if fmt == "wav":
             yield _wav_header(SAMPLE_RATE)  # stream with unknown data length
-        async for raw_chunk in _stream_chunks(voice_cfg, req.input):
+        async for raw_chunk in _stream_chunks(voice_cfg, req.input, req.instruct, req.language):
             yield raw_chunk
 
     return StreamingResponse(audio_stream(), media_type=content_type)
@@ -280,6 +346,12 @@ def _parse_args():
         "--model",
         default=os.environ.get("QWEN_TTS_MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-Base"),
         help="HuggingFace model ID or local path (default: Qwen/Qwen3-TTS-12Hz-1.7B-Base)",
+    )
+    p.add_argument(
+        "--mode",
+        default=os.environ.get("QWEN_TTS_MODE", "clone"),
+        choices=["clone", "custom"],
+        help="Generation mode (default: clone)",
     )
     p.add_argument(
         "--voices",
@@ -303,39 +375,100 @@ def _parse_args():
         default=os.environ.get("QWEN_TTS_LANGUAGE", "Auto"),
         help="Target language (English, French, Auto, …) when --voices is not used",
     )
+    p.add_argument(
+        "--speakers",
+        default=os.environ.get("QWEN_TTS_SPEAKERS", ""),
+        help="Comma-separated speaker list for --mode custom (default: all available speakers)",
+    )
+    p.add_argument(
+        "--default-voice",
+        default=os.environ.get("QWEN_TTS_DEFAULT_VOICE", ""),
+        help="Default voice name returned when request voice is missing",
+    )
+    p.add_argument(
+        "--instruct",
+        default=os.environ.get("QWEN_TTS_INSTRUCT", ""),
+        help="Optional instruct text passed to CustomVoice generation",
+    )
+    p.add_argument(
+        "--chunk-size",
+        type=int,
+        default=int(os.environ.get("QWEN_TTS_CHUNK_SIZE", "12")),
+        help="Streaming chunk size (default: 12)",
+    )
+    p.add_argument(
+        "--warmup-text",
+        default=os.environ.get(
+            "QWEN_TTS_WARMUP_TEXT",
+            "This startup warmup request captures CUDA graphs before the service becomes ready.",
+        ),
+        help="Warmup text used before the server is marked ready",
+    )
+    p.add_argument(
+        "--warmup-max-new-tokens",
+        type=int,
+        default=int(os.environ.get("QWEN_TTS_WARMUP_MAX_NEW_TOKENS", "32")),
+        help="Max new tokens for the startup warmup request (default: 32)",
+    )
+    p.add_argument(
+        "--no-startup-warmup",
+        action="store_true",
+        help="Disable startup warmup before the server is marked ready",
+    )
     p.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
     p.add_argument("--port", type=int, default=8000, help="Bind port (default: 8000)")
     p.add_argument("--device", default="cuda", help="Torch device (default: cuda)")
     return p.parse_args()
 
 
+def _run_startup_warmup(warmup_text: str, warmup_max_new_tokens: int) -> None:
+    global startup_warmup_completed, startup_warmup_seconds
+
+    if not voices:
+        logger.warning("Skipping startup warmup because no voices are configured")
+        return
+
+    voice_name = default_voice or next(iter(voices))
+    voice_cfg = resolve_voice(voice_name)
+    started = time.perf_counter()
+
+    with _model_lock:
+        if generation_mode == "clone":
+            tts_model.generate_voice_clone(
+                text=warmup_text,
+                language=voice_cfg.get("language", "Auto"),
+                ref_audio=voice_cfg["ref_audio"],
+                ref_text=voice_cfg.get("ref_text", ""),
+                max_new_tokens=warmup_max_new_tokens,
+            )
+        elif generation_mode == "custom":
+            tts_model.generate_custom_voice(
+                text=warmup_text,
+                speaker=voice_cfg.get("speaker", ""),
+                language=voice_cfg.get("language", "Auto"),
+                instruct=voice_cfg.get("instruct", ""),
+                max_new_tokens=warmup_max_new_tokens,
+            )
+        else:
+            raise RuntimeError(f"Unsupported generation mode: {generation_mode}")
+
+    startup_warmup_seconds = time.perf_counter() - started
+    startup_warmup_completed = True
+    logger.info(
+        "Startup warmup completed in %.3fs using voice %s",
+        startup_warmup_seconds,
+        voice_name,
+    )
+
+
 def main():
-    global tts_model, voices, default_voice, SAMPLE_RATE
+    global tts_model, voices, default_voice, SAMPLE_RATE, generation_mode
+    global startup_warmup_enabled, startup_warmup_completed, startup_warmup_seconds
 
     args = _parse_args()
-
-    # Build voice registry
-    if args.voices:
-        with open(args.voices) as f:
-            voices = json.load(f)
-        default_voice = next(iter(voices))
-        logger.info("Loaded %d voice(s) from %s", len(voices), args.voices)
-    elif args.ref_audio:
-        voices = {
-            "default": {
-                "ref_audio": args.ref_audio,
-                "ref_text": args.ref_text,
-                "language": args.language,
-            }
-        }
-        default_voice = "default"
-        logger.info("Using single voice from --ref-audio: %s", args.ref_audio)
-    else:
-        print(
-            "ERROR: provide --ref-audio <file> or --voices <config.json>",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    startup_warmup_enabled = not args.no_startup_warmup
+    startup_warmup_completed = False
+    startup_warmup_seconds = None
 
     from faster_qwen3_tts import FasterQwen3TTS
 
@@ -346,7 +479,82 @@ def main():
         dtype=torch.bfloat16,
     )
     SAMPLE_RATE = tts_model.sample_rate
+    generation_mode = args.mode
+
+    if generation_mode == "clone":
+        if args.voices:
+            with open(args.voices) as f:
+                voices = json.load(f)
+            default_voice = args.default_voice or next(iter(voices))
+            logger.info("Loaded %d voice(s) from %s", len(voices), args.voices)
+        elif args.ref_audio:
+            voices = {
+                args.default_voice or "default": {
+                    "ref_audio": args.ref_audio,
+                    "ref_text": args.ref_text,
+                    "language": args.language,
+                    "chunk_size": args.chunk_size,
+                }
+            }
+            default_voice = next(iter(voices))
+            logger.info("Using single clone voice from --ref-audio: %s", args.ref_audio)
+        else:
+            print(
+                "ERROR: clone mode requires --ref-audio <file> or --voices <config.json>",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    elif generation_mode == "custom":
+        supported_speakers = tts_model.model.get_supported_speakers() or []
+        if not supported_speakers:
+            print("ERROR: CustomVoice mode found no supported speakers in the loaded model", file=sys.stderr)
+            sys.exit(1)
+        requested_speakers = [item.strip() for item in args.speakers.split(",") if item.strip()]
+        selected_speakers = requested_speakers or supported_speakers
+        supported_lookup = {speaker.lower(): speaker for speaker in supported_speakers}
+        unresolved = [speaker for speaker in selected_speakers if speaker.lower() not in supported_lookup]
+        if unresolved:
+            print(
+                f"ERROR: unsupported speakers for model {args.model}: {unresolved}. "
+                f"Available: {supported_speakers}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        voices = {
+            speaker: {
+                "speaker": supported_lookup[speaker.lower()],
+                "language": args.language,
+                "instruct": args.instruct,
+                "chunk_size": args.chunk_size,
+            }
+            for speaker in selected_speakers
+        }
+        preferred_default = args.default_voice.strip() if args.default_voice else ""
+        if preferred_default:
+            resolved_default = supported_lookup.get(preferred_default.lower())
+            if resolved_default is None:
+                logger.warning(
+                    "Requested default voice %r is not available in %s; falling back",
+                    preferred_default,
+                    args.model,
+                )
+            else:
+                default_voice = resolved_default
+        if not default_voice and "vivian" in supported_lookup:
+            default_voice = supported_lookup["vivian"]
+        if not default_voice:
+            default_voice = next(iter(voices))
+        logger.info("Configured %d CustomVoice speaker(s): %s", len(voices), ", ".join(voices))
+    else:
+        print(f"ERROR: unsupported mode {generation_mode!r}", file=sys.stderr)
+        sys.exit(1)
+
+    if startup_warmup_enabled:
+        logger.info("Running startup warmup before declaring the service ready")
+        _run_startup_warmup(args.warmup_text, args.warmup_max_new_tokens)
+
     logger.info("Model ready. Sample rate: %d Hz", SAMPLE_RATE)
+    logger.info("Server mode: %s", generation_mode)
     logger.info("Server listening on http://%s:%d", args.host, args.port)
 
     uvicorn.run(app, host=args.host, port=args.port)

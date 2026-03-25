@@ -1,0 +1,8 @@
+librosa
+soundfile
+torchaudio
+sox
+onnxruntime==1.23.2
+nano-parakeet
+transformers==4.57.3
+huggingface-hub<1.0

@@ -142,11 +142,11 @@ python examples/openai_server.py \
 ```bash
 curl http://localhost:8000/v1/audio/speech \
     -H "Content-Type: application/json" \
-    -d '{"model": "tts-1", "input": "Hello world.", "voice": "alloy", "response_format": "wav"}' \
+    -d '{"model": "tts-1", "input": "Hello world.", "voice": "alloy", "response_format": "wav", "instruct": "Speak gently with a relaxed cadence."}' \
     --output speech.wav
 ```
 
-To expose multiple voices, pass a JSON file mapping names to reference audio configs — each `voice` value in a request will be routed to the matching entry (`--voices voices.json`). WAV and PCM formats stream chunks as they are generated; MP3 requires `pydub`.
+To expose multiple voices, pass a JSON file mapping names to reference audio configs — each `voice` value in a request will be routed to the matching entry (`--voices voices.json`). You can also pass an optional request-level `instruct` string on `/v1/audio/speech`; it overrides any static `instruct` configured on the selected voice. WAV and PCM formats stream chunks as they are generated; MP3 requires `pydub`.
 
 ## Results
 
