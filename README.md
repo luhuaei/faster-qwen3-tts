@@ -142,11 +142,29 @@ python examples/openai_server.py \
 ```bash
 curl http://localhost:8000/v1/audio/speech \
     -H "Content-Type: application/json" \
-    -d '{"model": "tts-1", "input": "Hello world.", "voice": "alloy", "response_format": "wav", "instruct": "Speak gently with a relaxed cadence."}' \
+    -d '{"model": "tts-1", "input": "Hello world.", "voice": "alloy", "response_format": "wav", "instruct": "Speak gently with a relaxed cadence.", "temperature": 0.5, "do_sample": false}' \
     --output speech.wav
 ```
 
-To expose multiple voices, pass a JSON file mapping names to reference audio configs — each `voice` value in a request will be routed to the matching entry (`--voices voices.json`). You can also pass an optional request-level `instruct` string on `/v1/audio/speech`; it overrides any static `instruct` configured on the selected voice. WAV and PCM formats stream chunks as they are generated; MP3 requires `pydub`.
+To expose multiple voices, pass a JSON file mapping names to reference audio configs — each `voice` value in a request will be routed to the matching entry (`--voices voices.json`). You can pass optional request-level `instruct`, `temperature`, and `do_sample` fields on `/v1/audio/speech`; they override any matching static values configured on the selected voice. WAV and PCM formats stream chunks as they are generated; MP3 requires `pydub`.
+
+The OpenAI-compatible server also supports a two-step x-vector clone flow:
+
+```bash
+# 1. Upload ~10s of reference audio and download a compact speaker .pt file
+curl http://localhost:8000/v1/audio/voice-clone/pt \
+    -F ref_audio=@ref_audio.wav \
+    --output speaker.pt
+
+# 2. Reuse that .pt file on /v1/audio/speech via multipart form-data
+curl http://localhost:8000/v1/audio/speech \
+    -F input="Hello world." \
+    -F response_format=wav \
+    -F voice_clone_pt=@speaker.pt \
+    --output cloned.wav
+```
+
+When `voice_clone_pt` is provided, the server skips `ref_audio` lookup and builds a `voice_clone_prompt` from the uploaded speaker embedding.
 
 ## Results
 

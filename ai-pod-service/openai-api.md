@@ -106,7 +106,7 @@ curl http://127.0.0.1:8000/v1/audio/voices
 
 说明：
 
-- `voice` 请求参数必须使用这里返回的名称
+- `voice` 请求参数大小写不敏感，服务会匹配这里返回的名称
 - 若请求里传入不存在的 `voice`，服务会尝试回退到 `default_voice`
 - 若没有可回退的默认音色，则返回 `400`
 
@@ -132,7 +132,10 @@ Accept: audio/wav
   "voice": "vivian",
   "response_format": "wav",
   "speed": 1.0,
-  "instruct": "用比较轻柔、放松的语气来读。"
+  "instruct": "用比较轻柔、放松的语气来读。",
+  "temperature": 0.5,
+  "do_sample": false,
+  "repetition_penalty": 1.15
 }
 ```
 
@@ -144,6 +147,10 @@ Accept: audio/wav
 - `response_format`: 支持 `wav`、`pcm`、`mp3`
 - `speed`: 当前版本仅接受该字段，但实际未生效
 - `instruct`: 可选的自定义指令文本，用于控制语气、风格、节奏或口音倾向
+- `temperature`: 可选采样温度，传入时覆盖 voice 配置或底层默认值
+- `do_sample`: 可选布尔值，控制是否启用采样；传 `false` 时走贪心解码
+- `repetition_penalty`: 可选重复惩罚系数，值越大越抑制重复和拖长
+- `voice_clone_pt`: 仅在 `multipart/form-data` 请求中可选携带的 `.pt` 文件；内容应为通过 `/v1/audio/voice-clone/pt` 导出的 speaker embedding
 
 `instruct` 的行为：
 
@@ -152,11 +159,50 @@ Accept: audio/wav
 - 请求里不传 `instruct` 时，沿用当前服务默认行为
 - 对 Base voice cloning，`instruct` 可用，但在 `xvec_only=True` 的底层模式中仍应视为实验特性
 
+请求级采样参数的行为：
+
+- 请求里传入 `temperature` 时，优先级高于 voice 配置中的静态 `temperature`
+- 请求里传入 `do_sample` 时，优先级高于 voice 配置中的静态 `do_sample`
+- 请求里传入 `repetition_penalty` 时，优先级高于 voice 配置中的静态 `repetition_penalty`
+- 请求里不传这些字段时，优先使用 voice 配置中的同名字段；若 voice 配置也没有，则沿用底层生成接口默认值
+
 返回行为：
 
 - `wav`: 流式返回，`Content-Type: audio/wav`
 - `pcm`: 流式返回，`Content-Type: audio/pcm`
 - `mp3`: 非流式返回，`Content-Type: audio/mpeg`
+
+`multipart/form-data` 扩展行为：
+
+- `/v1/audio/speech` 现在同时接受 `application/json` 和 `multipart/form-data`
+- 当携带 `voice_clone_pt` 时，服务端会直接加载该 `.pt` 并构造 `voice_clone_prompt`
+- 这种情况下不会再依赖静态 `voice -> ref_audio` 映射；`voice` 字段仅作为兼容字段接受
+
+### `POST /v1/audio/voice-clone/pt`
+
+上传约 10 秒参考音频，返回可复用的 x-vector speaker embedding `.pt` 文件。
+
+请求：
+
+- `Content-Type: multipart/form-data`
+- 表单字段：
+  - `ref_audio`: 必填，参考音频文件
+  - `model`: 可选兼容字段，当前接受但不用于切换模型
+  - `format`: 可选，当前仅支持 `pt`
+
+返回：
+
+- `200 OK`
+- `Content-Type: application/octet-stream`
+- 响应体为 `.pt` 二进制文件，可直接保存
+
+示例：
+
+```bash
+curl http://127.0.0.1:8000/v1/audio/voice-clone/pt \
+  -F ref_audio=@ref_audio.wav \
+  --output speaker.pt
+```
 
 ### 3.1 非流式调用
 
@@ -180,6 +226,24 @@ curl http://127.0.0.1:8000/v1/audio/speech \
   --output speech.wav
 ```
 
+#### WAV + temperature + do_sample 示例
+
+```bash
+curl http://127.0.0.1:8000/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{"model":"tts-1","input":"今天我们试试更稳定一点的表达。","voice":"vivian","response_format":"wav","temperature":0.5,"do_sample":false}' \
+  --output speech.wav
+```
+
+#### WAV + repetition_penalty 示例
+
+```bash
+curl http://127.0.0.1:8000/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{"model":"tts-1","input":"今天我们试试减少重复和拖长。","voice":"vivian","response_format":"wav","do_sample":false,"repetition_penalty":1.15}' \
+  --output speech.wav
+```
+
 #### MP3 示例
 
 ```bash
@@ -187,6 +251,16 @@ curl http://127.0.0.1:8000/v1/audio/speech \
   -H "Content-Type: application/json" \
   -d '{"model":"tts-1","input":"Hello world.","voice":"vivian","response_format":"mp3"}' \
   --output speech.mp3
+```
+
+#### 携带 `.pt` 克隆音色示例
+
+```bash
+curl http://127.0.0.1:8000/v1/audio/speech \
+  -F input="今天这段话使用上传的克隆音色来朗读。" \
+  -F response_format=wav \
+  -F voice_clone_pt=@speaker.pt \
+  --output speech.wav
 ```
 
 说明：
@@ -333,8 +407,9 @@ const blob = new Blob(chunks, { type: "audio/wav" });
 已兼容的核心点：
 
 - `POST /v1/audio/speech`
+- `POST /v1/audio/voice-clone/pt`
 - `model / input / voice / response_format / speed` 这些常见字段
-- 额外支持一个扩展字段：`instruct`
+- 额外支持扩展字段：`instruct`、`temperature`、`do_sample`、`repetition_penalty`、`voice_clone_pt`
 
 当前差异：
 

@@ -15,7 +15,7 @@ import paramiko
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REMOTE_ROOT = "/home/nvidia/faster-qwen3-tts-aipod"
-DEFAULT_IMAGE = "lzcbox-90fc188b.lan:5001/x/faster-qwen3-tts:0.6b-custom-openai-orin-v1"
+DEFAULT_IMAGE = "lzcbox-90fc188b.lan:5001/x/faster-qwen3-tts:0.6b-custom-openai-orin-v4"
 MODEL_NAME = "Qwen3-TTS-12Hz-0.6B-CustomVoice"
 
 

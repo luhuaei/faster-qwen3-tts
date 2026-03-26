@@ -1,6 +1,6 @@
 services:
   faster-qwen3-tts:
-    image: registry.lazycat.cloud/x/faster-qwen3-tts:0.6b-custom-openai-orin-v1
+    image: registry.lazycat.cloud/x/faster-qwen3-tts:0.6b-custom-openai-orin-v5
     environment:
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
@@ -10,6 +10,8 @@ services:
       QWEN_TTS_MODE: custom
       QWEN_TTS_DEFAULT_VOICE: vivian
       QWEN_TTS_LANGUAGE: Auto
+      QWEN_TTS_TEMPERATURE: "1.0"
+      QWEN_TTS_DO_SAMPLE: "0"
       QWEN_TTS_CHUNK_SIZE: "8"
       QWEN_TTS_WARMUP_MAX_NEW_TOKENS: "32"
     volumes:
@@ -32,4 +34,3 @@ networks:
   default:
     external: true
     name: traefik-shared-network
-
