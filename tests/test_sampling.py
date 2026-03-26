@@ -4,7 +4,8 @@ import pytest
 import torch
 
 from faster_qwen3_tts.generate import fast_generate
-from faster_qwen3_tts.sampling import apply_repetition_penalty
+from faster_qwen3_tts.predictor_graph import PredictorGraph
+from faster_qwen3_tts.sampling import apply_repetition_penalty, sample_logits
 
 
 def test_repetition_penalty_uses_all_history():
@@ -19,6 +20,83 @@ def test_repetition_penalty_uses_all_history():
     out = apply_repetition_penalty(logits.clone(), history, repetition_penalty=1.1)
     assert pytest.approx(out[0, 0, 7].item(), rel=1e-6) == 1.0 / 1.1
     assert pytest.approx(out[0, 0, 8].item(), rel=1e-6) == -1.0 * 1.1
+
+
+def test_sample_logits_respects_explicit_generator_seed():
+    logits = torch.tensor([[0.1, 0.2, 3.0]], dtype=torch.float32)
+
+    first_gen = torch.Generator(device=logits.device)
+    first_gen.manual_seed(1234)
+    first = [
+        int(
+            sample_logits(
+                logits,
+                temperature=1.0,
+                top_k=0,
+                top_p=1.0,
+                do_sample=True,
+                generator=first_gen,
+            ).item()
+        )
+        for _ in range(8)
+    ]
+
+    second_gen = torch.Generator(device=logits.device)
+    second_gen.manual_seed(1234)
+    second = [
+        int(
+            sample_logits(
+                logits,
+                temperature=1.0,
+                top_k=0,
+                top_p=1.0,
+                do_sample=True,
+                generator=second_gen,
+            ).item()
+        )
+        for _ in range(8)
+    ]
+
+    third_gen = torch.Generator(device=logits.device)
+    third_gen.manual_seed(1235)
+    third = [
+        int(
+            sample_logits(
+                logits,
+                temperature=1.0,
+                top_k=0,
+                top_p=1.0,
+                do_sample=True,
+                generator=third_gen,
+            ).item()
+        )
+        for _ in range(8)
+    ]
+
+    assert first == second
+    assert first != third
+
+
+def test_predictor_graph_request_seed_splits_graph_and_eager_generators():
+    predictor_graph = PredictorGraph.__new__(PredictorGraph)
+    predictor_graph.device = "cpu"
+    predictor_graph.eager_generator = torch.Generator(device="cpu")
+    predictor_graph.device_index = None
+
+    initial_cpu_state = torch.random.get_rng_state()
+    predictor_graph.set_request_seed(1234)
+    first_graph = torch.randint(0, 1000, (8,))
+    first_eager = torch.randint(0, 1000, (8,), generator=predictor_graph.eager_generator)
+
+    predictor_graph.set_request_seed(1234)
+    second_graph = torch.randint(0, 1000, (8,))
+    second_eager = torch.randint(0, 1000, (8,), generator=predictor_graph.eager_generator)
+
+    torch.random.set_rng_state(initial_cpu_state)
+
+    assert torch.equal(first_graph, second_graph)
+    assert torch.equal(first_eager, second_eager)
+    assert not torch.equal(first_graph, first_eager)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for fast_generate syncs.")

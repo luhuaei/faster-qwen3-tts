@@ -33,6 +33,7 @@ def fast_generate_streaming(
     do_sample: bool = True,
     repetition_penalty: float = 1.05,
     chunk_size: int = 12,
+    generator: torch.Generator | None = None,
 ) -> Generator[Tuple[torch.Tensor, dict], None, None]:
     """
     Streaming autoregressive generation with CUDA-graphed predictor and talker.
@@ -87,6 +88,7 @@ def fast_generate_streaming(
         do_sample=do_sample,
         suppress_mask=suppress_mask,
         suppress_tokens=[eos_id] if suppress_eos else None,
+        generator=generator,
     )
 
     prefill_len = talker_graph.prefill_kv(talker_past_kv)
@@ -149,6 +151,7 @@ def fast_generate_streaming(
             do_sample=do_sample,
             suppress_mask=suppress_mask,
             suppress_tokens=[eos_id] if suppress_eos else None,
+            generator=generator,
         )
         past_hidden = hidden_states[:, -1:, :].clone()
         gen_step += 1
@@ -204,6 +207,7 @@ def parity_generate_streaming(
     do_sample: bool = True,
     repetition_penalty: float = 1.05,
     chunk_size: int = 12,
+    generator: torch.Generator | None = None,
 ) -> Generator[Tuple[torch.Tensor, dict], None, None]:
     """
     Streaming generation without CUDA graphs (dynamic cache).
@@ -254,6 +258,7 @@ def parity_generate_streaming(
         do_sample=do_sample,
         suppress_mask=suppress_mask,
         suppress_tokens=[eos_id] if suppress_eos else None,
+        generator=generator,
     )
 
     if attention_mask is not None:
@@ -320,6 +325,7 @@ def parity_generate_streaming(
             do_sample=do_sample,
             suppress_mask=suppress_mask,
             suppress_tokens=[eos_id] if suppress_eos else None,
+            generator=generator,
         )
 
         talker_past_kv = out.past_key_values

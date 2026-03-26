@@ -92,6 +92,7 @@ class SpeechRequest(BaseModel):
     speed: float = 1.0           # accepted but not yet applied
     instruct: Optional[str] = None
     language: Optional[str] = None
+    seed: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +197,7 @@ async def _stream_chunks(
     text: str,
     request_instruct: Optional[str],
     request_language: Optional[str],
+    request_seed: Optional[int],
 ) -> AsyncGenerator[bytes, None]:
     """
     Run generate_voice_clone_streaming in a background thread and yield
@@ -216,6 +218,7 @@ async def _stream_chunks(
                         chunk_size=voice_cfg.get("chunk_size", 12),
                         instruct=_resolve_instruct(voice_cfg, request_instruct),
                         non_streaming_mode=False,
+                        seed=request_seed,
                     )
                 elif generation_mode == "custom":
                     generator = tts_model.generate_custom_voice_streaming(
@@ -224,6 +227,7 @@ async def _stream_chunks(
                         language=_resolve_language(voice_cfg, request_language),
                         instruct=_resolve_instruct(voice_cfg, request_instruct),
                         chunk_size=voice_cfg.get("chunk_size", 12),
+                        seed=request_seed,
                     )
                 else:
                     raise RuntimeError(f"Unsupported generation mode: {generation_mode}")
@@ -307,6 +311,7 @@ async def create_speech(req: SpeechRequest):
                         ref_audio=voice_cfg["ref_audio"],
                         ref_text=voice_cfg.get("ref_text", ""),
                         instruct=_resolve_instruct(voice_cfg, req.instruct),
+                        seed=req.seed,
                     )
                 if generation_mode == "custom":
                     return tts_model.generate_custom_voice(
@@ -314,6 +319,7 @@ async def create_speech(req: SpeechRequest):
                         speaker=voice_cfg.get("speaker", ""),
                         language=_resolve_language(voice_cfg, req.language),
                         instruct=_resolve_instruct(voice_cfg, req.instruct),
+                        seed=req.seed,
                     )
                 raise RuntimeError(f"Unsupported generation mode: {generation_mode}")
 
@@ -325,7 +331,7 @@ async def create_speech(req: SpeechRequest):
     async def audio_stream():
         if fmt == "wav":
             yield _wav_header(SAMPLE_RATE)  # stream with unknown data length
-        async for raw_chunk in _stream_chunks(voice_cfg, req.input, req.instruct, req.language):
+        async for raw_chunk in _stream_chunks(voice_cfg, req.input, req.instruct, req.language, req.seed):
             yield raw_chunk
 
     return StreamingResponse(audio_stream(), media_type=content_type)

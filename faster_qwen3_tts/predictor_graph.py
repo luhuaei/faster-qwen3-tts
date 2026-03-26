@@ -20,6 +20,11 @@ from transformers.masking_utils import create_causal_mask, create_sliding_window
 from .sampling import sample_logits
 
 
+def _normalize_request_seed(seed: int) -> int:
+    """Clamp user-provided seeds to a stable unsigned 63-bit range."""
+    return int(seed) & ((1 << 63) - 1)
+
+
 class PredictorGraph:
     """
     Captures the full predictor 15-step loop as a CUDA graph,
@@ -69,11 +74,31 @@ class PredictorGraph:
         # I/O buffers
         self.input_buf = torch.zeros(1, 2, talker_hidden_size, dtype=dtype, device=device)
         self.output_tokens = torch.zeros(self.num_codebooks, dtype=torch.long, device=device)
+        self.eager_generator = torch.Generator(device=device)
+        self.eager_generator.seed()
 
         self.graph = None
         self.captured = False
         self.prefill_attn = None
         self.decode_attn = None
+
+    def set_request_seed(self, seed=None):
+        """Reset graph/eager RNG streams for a request without recapturing the graph."""
+        if seed is None:
+            if str(self.device).startswith("cuda"):
+                with torch.cuda.device(self.device_index):
+                    torch.cuda.seed()
+            else:
+                torch.seed()
+            self.eager_generator.seed()
+        else:
+            base_seed = _normalize_request_seed(seed)
+            if str(self.device).startswith("cuda"):
+                with torch.cuda.device(self.device_index):
+                    torch.cuda.manual_seed(base_seed)
+            else:
+                torch.manual_seed(base_seed)
+            self.eager_generator.manual_seed((base_seed + 1) & ((1 << 63) - 1))
 
     def _init_cache_layers(self):
         """Force lazy initialization of StaticCache layers before graph capture."""

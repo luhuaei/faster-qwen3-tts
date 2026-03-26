@@ -34,6 +34,7 @@ def fast_generate(
     subtalker_top_p: Optional[float] = None,
     subtalker_temperature: Optional[float] = None,
     parity_mode: bool = False,
+    generator: Optional[torch.Generator] = None,
 ) -> Tuple[Optional[torch.Tensor], dict]:
     """
     Fast autoregressive generation with CUDA-graphed predictor and talker.
@@ -131,6 +132,7 @@ def fast_generate(
         do_sample=do_sample,
         suppress_mask=suppress_mask,
         suppress_tokens=[eos_id] if suppress_eos else None,
+        generator=generator,
     )
     
     # Copy prefill KV cache into talker graph's static cache
@@ -194,6 +196,7 @@ def fast_generate(
             do_sample=do_sample,
             suppress_mask=suppress_mask,
             suppress_tokens=[eos_id] if suppress_eos else None,
+            generator=generator,
         )
         past_hidden = hidden_states[:, -1:, :].clone()  # clone since it's the static buffer
         gen_step += 1

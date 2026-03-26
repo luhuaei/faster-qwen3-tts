@@ -174,6 +174,13 @@ class FasterQwen3TTS:
         self.talker_graph.capture(prefill_len=prefill_len, num_warmup=3)
         self._warmed_up = True
         logger.info("CUDA graphs captured and ready")
+
+    def _configure_request_generator(self, seed: Optional[int]) -> Optional[torch.Generator]:
+        """Reset the shared predictor/talker RNG stream for a request."""
+        if not hasattr(self.predictor_graph, "set_request_seed"):
+            return None
+        self.predictor_graph.set_request_seed(seed)
+        return getattr(self.predictor_graph, "eager_generator", None)
     
     def generate(
         self,
@@ -742,6 +749,7 @@ class FasterQwen3TTS:
         append_silence: bool = True,
         instruct: Optional[str] = None,
         voice_clone_prompt: Optional[Union[Dict[str, Any], List[Any]]] = None,
+        seed: Optional[int] = None,
     ) -> Tuple[list, int]:
         """
         Generate speech with voice cloning using reference audio.
@@ -789,6 +797,7 @@ class FasterQwen3TTS:
             voice_clone_prompt=voice_clone_prompt,
             instruct=instruct,
         )
+        request_generator = self._configure_request_generator(seed)
 
         codec_ids, timing = fast_generate(
             talker=talker,
@@ -806,6 +815,7 @@ class FasterQwen3TTS:
             top_p=top_p,
             do_sample=do_sample,
             repetition_penalty=repetition_penalty,
+            generator=request_generator,
         )
 
         if codec_ids is None:
@@ -869,6 +879,7 @@ class FasterQwen3TTS:
         parity_mode: bool = False,
         instruct: Optional[str] = None,
         voice_clone_prompt: Optional[Union[Dict[str, Any], List[Any]]] = None,
+        seed: Optional[int] = None,
     ) -> Generator[Tuple[np.ndarray, int, dict], None, None]:
         """
         Stream voice-cloned speech generation, yielding audio chunks.
@@ -921,6 +932,7 @@ class FasterQwen3TTS:
             voice_clone_prompt=voice_clone_prompt,
             instruct=instruct,
         )
+        request_generator = self._configure_request_generator(seed)
 
         speech_tokenizer = m.speech_tokenizer
 
@@ -950,6 +962,7 @@ class FasterQwen3TTS:
             do_sample=do_sample,
             repetition_penalty=repetition_penalty,
             chunk_size=chunk_size,
+            generator=request_generator,
         )
         if not parity_mode:
             stream_kwargs["predictor_graph"] = self.predictor_graph
@@ -1029,6 +1042,7 @@ class FasterQwen3TTS:
         top_p: float = 1.0,
         do_sample: bool = True,
         repetition_penalty: float = 1.05,
+        seed: Optional[int] = None,
     ) -> Tuple[list, int]:
         if self.model.model.tts_model_type != "custom_voice":
             raise ValueError("Loaded model does not support custom voice generation")
@@ -1044,6 +1058,7 @@ class FasterQwen3TTS:
             speaker=speaker,
             instruct=instruct,
         )
+        request_generator = self._configure_request_generator(seed)
 
         codec_ids, timing = fast_generate(
             talker=talker,
@@ -1061,6 +1076,7 @@ class FasterQwen3TTS:
             top_p=top_p,
             do_sample=do_sample,
             repetition_penalty=repetition_penalty,
+            generator=request_generator,
         )
 
         if codec_ids is None:
@@ -1104,6 +1120,7 @@ class FasterQwen3TTS:
         do_sample: bool = True,
         repetition_penalty: float = 1.05,
         chunk_size: int = 12,
+        seed: Optional[int] = None,
     ) -> Generator[Tuple[np.ndarray, int, dict], None, None]:
         if self.model.model.tts_model_type != "custom_voice":
             raise ValueError("Loaded model does not support custom voice generation")
@@ -1119,6 +1136,7 @@ class FasterQwen3TTS:
             speaker=speaker,
             instruct=instruct,
         )
+        request_generator = self._configure_request_generator(seed)
 
         speech_tokenizer = m.speech_tokenizer
 
@@ -1145,6 +1163,7 @@ class FasterQwen3TTS:
             do_sample=do_sample,
             repetition_penalty=repetition_penalty,
             chunk_size=chunk_size,
+            generator=request_generator,
         ):
             all_codes.append(codec_chunk)
             n_new = codec_chunk.shape[0]
