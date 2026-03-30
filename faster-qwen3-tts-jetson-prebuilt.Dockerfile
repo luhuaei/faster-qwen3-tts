@@ -1,17 +1,14 @@
 ARG BASE_IMAGE=127.0.0.1:5001/x/lzc-aipod-vllm:bffa39b-orin
-ARG PIP_INDEX_URL=https://pypi.jetson-ai-lab.io/jp6/cu126/+simple
-ARG PIP_EXTRA_INDEX_URL=
-ARG TORCHAUDIO_SPEC=torchaudio==2.10.0
+ARG PREBUILT_APP_IMAGE=127.0.0.1:5001/x/faster-qwen3-tts:0.6b-custom-openai-orin-v1
 ARG MODEL_NAME=Qwen3-TTS-12Hz-0.6B-CustomVoice
 ARG MODEL_DIR=/opt/models/Qwen3-TTS-12Hz-0.6B-CustomVoice
 ARG QWEN_TTS_MODEL=/opt/models/Qwen3-TTS-12Hz-0.6B-CustomVoice
 ARG QWEN_TTS_MODE=custom
 ARG QWEN_TTS_DEFAULT_VOICE=vivian
+
+FROM ${PREBUILT_APP_IMAGE} AS prebuilt_app
 FROM ${BASE_IMAGE}
 
-ARG PIP_INDEX_URL
-ARG PIP_EXTRA_INDEX_URL
-ARG TORCHAUDIO_SPEC
 ARG MODEL_NAME
 ARG MODEL_DIR
 ARG QWEN_TTS_MODEL
@@ -40,17 +37,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg libsndfile1 sox \
     && rm -rf /var/lib/apt/lists/*
 
-COPY faster-qwen3-tts-requirements.txt /tmp/faster-qwen3-tts-requirements.txt
-RUN grep -v '^torchaudio$' /tmp/faster-qwen3-tts-requirements.txt > /tmp/faster-qwen3-tts-requirements-no-torchaudio.txt \
-    && uv venv "${APP_VENV}" --system-site-packages \
-    && PIP_INDEX_URL="${PIP_INDEX_URL}" PIP_EXTRA_INDEX_URL="${PIP_EXTRA_INDEX_URL}" \
-       uv pip install --python "${APP_VENV}/bin/python3" -r /tmp/faster-qwen3-tts-requirements-no-torchaudio.txt \
-    && PIP_INDEX_URL="${PIP_INDEX_URL}" PIP_EXTRA_INDEX_URL="${PIP_EXTRA_INDEX_URL}" \
-       uv pip install --python "${APP_VENV}/bin/python3" --no-deps "accelerate==1.12.0" \
-    && PIP_INDEX_URL="${PIP_INDEX_URL}" PIP_EXTRA_INDEX_URL="${PIP_EXTRA_INDEX_URL}" \
-       uv pip install --python "${APP_VENV}/bin/python3" --no-deps "${TORCHAUDIO_SPEC}" \
-    && rm -rf /root/.cache/uv
-
+COPY --from=prebuilt_app /opt/faster-qwen3-tts-venv /opt/faster-qwen3-tts-venv
 COPY MANIFEST.in README.md pyproject.toml /opt/build/faster-qwen3-tts/
 COPY faster_qwen3_tts /opt/build/faster-qwen3-tts/faster_qwen3_tts
 COPY examples/openai_server.py /opt/build/faster-qwen3-tts/examples/openai_server.py
@@ -58,6 +45,7 @@ COPY models/${MODEL_NAME} ${MODEL_DIR}
 
 RUN uv pip install --python "${APP_VENV}/bin/python3" "qwen-tts>=0.1.1" \
     && uv pip install --python "${APP_VENV}/bin/python3" -e "/opt/build/faster-qwen3-tts[demo]" --no-build-isolation \
+    && find /opt/models -mindepth 1 -maxdepth 1 ! -name "${MODEL_NAME}" -prune -exec rm -rf '{}' + \
     && find /opt/build -name '__pycache__' -type d -prune -exec rm -rf '{}' + \
     && find /root/.cache -type d -name '.locks' -prune -exec rm -rf '{}' + \
     && rm -rf /root/.cache/uv

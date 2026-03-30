@@ -4,6 +4,7 @@ FasterQwen3TTS: Real-time TTS using CUDA graph capture.
 Wrapper class that provides a Qwen3-TTS API while using
 CUDA graphs for 6-10x speedup.
 """
+import inspect
 import logging
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional, Tuple, Union
@@ -181,6 +182,45 @@ class FasterQwen3TTS:
             return None
         self.predictor_graph.set_request_seed(seed)
         return getattr(self.predictor_graph, "eager_generator", None)
+
+    @staticmethod
+    def _maybe_attach_generator(kwargs: Dict[str, Any], fn, generator: Optional[torch.Generator]) -> Dict[str, Any]:
+        """Pass generator only when the installed helper function supports it."""
+        if generator is None:
+            return kwargs
+        try:
+            supports_generator = "generator" in inspect.signature(fn).parameters
+        except (TypeError, ValueError):
+            supports_generator = False
+        if supports_generator:
+            kwargs["generator"] = generator
+        return kwargs
+
+    def extract_speaker_embedding(self, ref_audio: Union[str, Path]) -> torch.Tensor:
+        """Extract a reusable x-vector speaker embedding from reference audio."""
+        prompt_items = self.model.create_voice_clone_prompt(
+            ref_audio=str(ref_audio),
+            ref_text="",
+            x_vector_only_mode=True,
+        )
+        speaker_embedding = prompt_items[0].ref_spk_embedding
+        if not isinstance(speaker_embedding, torch.Tensor):
+            raise TypeError("create_voice_clone_prompt returned a non-tensor speaker embedding")
+        return speaker_embedding.detach().clone()
+
+    def build_voice_clone_prompt_from_embedding(self, speaker_embedding: torch.Tensor) -> Dict[str, Any]:
+        """Wrap a saved speaker embedding into the public voice_clone_prompt format."""
+        if not isinstance(speaker_embedding, torch.Tensor):
+            raise TypeError("speaker_embedding must be a torch.Tensor")
+        if speaker_embedding.ndim == 1:
+            speaker_embedding = speaker_embedding.unsqueeze(0)
+        speaker_embedding = speaker_embedding.detach().to(self.device)
+        return dict(
+            ref_code=[None],
+            ref_spk_embedding=[speaker_embedding],
+            x_vector_only_mode=[True],
+            icl_mode=[False],
+        )
     
     def generate(
         self,
@@ -748,8 +788,8 @@ class FasterQwen3TTS:
         non_streaming_mode: bool = False,
         append_silence: bool = True,
         instruct: Optional[str] = None,
-        voice_clone_prompt: Optional[Union[Dict[str, Any], List[Any]]] = None,
         seed: Optional[int] = None,
+        voice_clone_prompt: Optional[Union[Dict[str, Any], List[Any]]] = None,
     ) -> Tuple[list, int]:
         """
         Generate speech with voice cloning using reference audio.
@@ -799,23 +839,29 @@ class FasterQwen3TTS:
         )
         request_generator = self._configure_request_generator(seed)
 
+        generate_kwargs = self._maybe_attach_generator(
+            dict(
+                talker=talker,
+                talker_input_embeds=tie,
+                attention_mask=tam,
+                trailing_text_hiddens=tth,
+                tts_pad_embed=tpe,
+                config=config,
+                predictor_graph=self.predictor_graph,
+                talker_graph=self.talker_graph,
+                max_new_tokens=max_new_tokens,
+                min_new_tokens=min_new_tokens,
+                temperature=temperature,
+                top_k=top_k,
+                top_p=top_p,
+                do_sample=do_sample,
+                repetition_penalty=repetition_penalty,
+            ),
+            fast_generate,
+            request_generator,
+        )
         codec_ids, timing = fast_generate(
-            talker=talker,
-            talker_input_embeds=tie,
-            attention_mask=tam,
-            trailing_text_hiddens=tth,
-            tts_pad_embed=tpe,
-            config=config,
-            predictor_graph=self.predictor_graph,
-            talker_graph=self.talker_graph,
-            max_new_tokens=max_new_tokens,
-            min_new_tokens=min_new_tokens,
-            temperature=temperature,
-            top_k=top_k,
-            top_p=top_p,
-            do_sample=do_sample,
-            repetition_penalty=repetition_penalty,
-            generator=request_generator,
+            **generate_kwargs,
         )
 
         if codec_ids is None:
@@ -878,8 +924,8 @@ class FasterQwen3TTS:
         append_silence: bool = True,
         parity_mode: bool = False,
         instruct: Optional[str] = None,
-        voice_clone_prompt: Optional[Union[Dict[str, Any], List[Any]]] = None,
         seed: Optional[int] = None,
+        voice_clone_prompt: Optional[Union[Dict[str, Any], List[Any]]] = None,
     ) -> Generator[Tuple[np.ndarray, int, dict], None, None]:
         """
         Stream voice-cloned speech generation, yielding audio chunks.
@@ -962,11 +1008,11 @@ class FasterQwen3TTS:
             do_sample=do_sample,
             repetition_penalty=repetition_penalty,
             chunk_size=chunk_size,
-            generator=request_generator,
         )
         if not parity_mode:
             stream_kwargs["predictor_graph"] = self.predictor_graph
             stream_kwargs["talker_graph"] = self.talker_graph
+        stream_kwargs = self._maybe_attach_generator(stream_kwargs, stream_fn, request_generator)
 
         for codec_chunk, timing in stream_fn(**stream_kwargs):
             all_codes.append(codec_chunk)
@@ -1060,23 +1106,29 @@ class FasterQwen3TTS:
         )
         request_generator = self._configure_request_generator(seed)
 
+        generate_kwargs = self._maybe_attach_generator(
+            dict(
+                talker=talker,
+                talker_input_embeds=tie,
+                attention_mask=tam,
+                trailing_text_hiddens=tth,
+                tts_pad_embed=tpe,
+                config=config,
+                predictor_graph=self.predictor_graph,
+                talker_graph=self.talker_graph,
+                max_new_tokens=max_new_tokens,
+                min_new_tokens=min_new_tokens,
+                temperature=temperature,
+                top_k=top_k,
+                top_p=top_p,
+                do_sample=do_sample,
+                repetition_penalty=repetition_penalty,
+            ),
+            fast_generate,
+            request_generator,
+        )
         codec_ids, timing = fast_generate(
-            talker=talker,
-            talker_input_embeds=tie,
-            attention_mask=tam,
-            trailing_text_hiddens=tth,
-            tts_pad_embed=tpe,
-            config=config,
-            predictor_graph=self.predictor_graph,
-            talker_graph=self.talker_graph,
-            max_new_tokens=max_new_tokens,
-            min_new_tokens=min_new_tokens,
-            temperature=temperature,
-            top_k=top_k,
-            top_p=top_p,
-            do_sample=do_sample,
-            repetition_penalty=repetition_penalty,
-            generator=request_generator,
+            **generate_kwargs,
         )
 
         if codec_ids is None:
@@ -1146,25 +1198,29 @@ class FasterQwen3TTS:
         prev_audio_len = 0
         samples_per_frame = None
 
-        for codec_chunk, timing in fast_generate_streaming(
-            talker=talker,
-            talker_input_embeds=tie,
-            attention_mask=tam,
-            trailing_text_hiddens=tth,
-            tts_pad_embed=tpe,
-            config=config,
-            predictor_graph=self.predictor_graph,
-            talker_graph=self.talker_graph,
-            max_new_tokens=max_new_tokens,
-            min_new_tokens=min_new_tokens,
-            temperature=temperature,
-            top_k=top_k,
-            top_p=top_p,
-            do_sample=do_sample,
-            repetition_penalty=repetition_penalty,
-            chunk_size=chunk_size,
-            generator=request_generator,
-        ):
+        stream_kwargs = self._maybe_attach_generator(
+            dict(
+                talker=talker,
+                talker_input_embeds=tie,
+                attention_mask=tam,
+                trailing_text_hiddens=tth,
+                tts_pad_embed=tpe,
+                config=config,
+                predictor_graph=self.predictor_graph,
+                talker_graph=self.talker_graph,
+                max_new_tokens=max_new_tokens,
+                min_new_tokens=min_new_tokens,
+                temperature=temperature,
+                top_k=top_k,
+                top_p=top_p,
+                do_sample=do_sample,
+                repetition_penalty=repetition_penalty,
+                chunk_size=chunk_size,
+            ),
+            fast_generate_streaming,
+            request_generator,
+        )
+        for codec_chunk, timing in fast_generate_streaming(**stream_kwargs):
             all_codes.append(codec_chunk)
             n_new = codec_chunk.shape[0]
             all_flat = torch.cat(all_codes, dim=0)

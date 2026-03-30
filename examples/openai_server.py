@@ -25,13 +25,22 @@ Usage:
 Voices config (voices.json):
     {
         "alloy": {"ref_audio": "voice.wav", "ref_text": "...", "language": "English"},
-        "echo":  {"ref_audio": "voice2.wav", "ref_text": "...", "language": "English"}
+        "echo":  {"ref_audio": "voice2.wav", "ref_text": "...", "language": "English"},
+        "cached": {"speaker_pt": "speaker.pt", "language": "English"}
     }
 
 API usage:
     curl -s http://localhost:8000/v1/audio/speech \\
         -H "Content-Type: application/json" \\
         -d '{"model": "tts-1", "input": "Hello!", "voice": "alloy", "response_format": "wav", "instruct": "Speak gently with a relaxed cadence."}' \\
+        --output speech.wav
+
+    curl -s http://localhost:8000/v1/audio/speech \\
+        -F "model=tts-1" \\
+        -F "input=Hello from a request-scoped speaker embedding!" \\
+        -F "voice=alloy" \\
+        -F "response_format=wav" \\
+        -F "voice_clone_pt=@speaker.pt;type=application/octet-stream" \\
         --output speech.wav
 """
 import argparse
@@ -43,16 +52,18 @@ import os
 import queue
 import struct
 import sys
+import tempfile
 import threading
 import time
+from pathlib import Path
 from typing import AsyncGenerator, Optional
 
 import numpy as np
 import torch
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -74,6 +85,7 @@ _model_lock = threading.Lock()  # prevent concurrent GPU inference
 startup_warmup_enabled = True
 startup_warmup_completed = False
 startup_warmup_seconds: Optional[float] = None
+_voice_clone_pt_cache: dict[str, dict] = {}
 
 def _is_ready() -> bool:
     return tts_model is not None and (not startup_warmup_enabled or startup_warmup_completed)
@@ -93,6 +105,149 @@ class SpeechRequest(BaseModel):
     instruct: Optional[str] = None
     language: Optional[str] = None
     seed: Optional[int] = None
+
+
+def _serialize_speaker_embedding(speaker_embedding: torch.Tensor) -> bytes:
+    buf = io.BytesIO()
+    torch.save(speaker_embedding.detach().cpu(), buf)
+    return buf.getvalue()
+
+
+def _is_upload_file(value) -> bool:
+    return hasattr(value, "read") and hasattr(value, "filename")
+
+
+def _load_speaker_embedding_payload(payload: bytes) -> torch.Tensor:
+    try:
+        loaded = torch.load(io.BytesIO(payload), map_location="cpu", weights_only=True)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Invalid voice clone pt file: {exc}") from exc
+
+    if isinstance(loaded, torch.Tensor):
+        speaker_embedding = loaded
+    elif isinstance(loaded, dict):
+        if "ref_spk_embedding" in loaded:
+            ref_spk_embedding = loaded["ref_spk_embedding"]
+            if not isinstance(ref_spk_embedding, list) or len(ref_spk_embedding) != 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid voice clone pt file: ref_spk_embedding must be a single-item list",
+                )
+            speaker_embedding = ref_spk_embedding[0]
+        elif "speaker_embedding" in loaded:
+            speaker_embedding = loaded["speaker_embedding"]
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid voice clone pt file: expected a tensor or dict with ref_spk_embedding",
+            )
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid voice clone pt file: unsupported payload type {type(loaded).__name__}",
+        )
+
+    if not isinstance(speaker_embedding, torch.Tensor):
+        raise HTTPException(status_code=400, detail="Invalid voice clone pt file: speaker embedding is not a tensor")
+    return speaker_embedding
+
+
+def _voice_clone_prompt_from_pt_bytes(payload: bytes) -> dict:
+    if tts_model is None:
+        raise HTTPException(status_code=503, detail="Model not loaded")
+    if not hasattr(tts_model, "build_voice_clone_prompt_from_embedding"):
+        raise HTTPException(status_code=400, detail="Loaded model does not support voice clone pt files")
+    speaker_embedding = _load_speaker_embedding_payload(payload)
+    return tts_model.build_voice_clone_prompt_from_embedding(speaker_embedding)
+
+
+def _load_voice_clone_prompt_from_path(path: str) -> dict:
+    cached = _voice_clone_pt_cache.get(path)
+    if cached is not None:
+        return cached
+    prompt = _voice_clone_prompt_from_pt_bytes(Path(path).read_bytes())
+    _voice_clone_pt_cache[path] = prompt
+    return prompt
+
+
+def _resolve_clone_voice_prompt(voice_cfg: dict, request_voice_clone_prompt: Optional[dict]) -> Optional[dict]:
+    if request_voice_clone_prompt is not None:
+        return request_voice_clone_prompt
+
+    speaker_pt = voice_cfg.get("speaker_pt") or voice_cfg.get("voice_clone_pt") or voice_cfg.get("pt")
+    if not speaker_pt:
+        return None
+    return _load_voice_clone_prompt_from_path(speaker_pt)
+
+
+def _voice_cfg_has_clone_source(voice_cfg: dict) -> bool:
+    if voice_cfg.get("ref_audio"):
+        return True
+    if voice_cfg.get("speaker_pt") or voice_cfg.get("voice_clone_pt") or voice_cfg.get("pt"):
+        return True
+    return False
+
+
+def _build_clone_generation_kwargs(
+    voice_cfg: dict,
+    text: str,
+    request_instruct: Optional[str],
+    request_language: Optional[str],
+    request_seed: Optional[int],
+    request_voice_clone_prompt: Optional[dict],
+) -> dict:
+    voice_clone_prompt = _resolve_clone_voice_prompt(voice_cfg, request_voice_clone_prompt)
+    ref_audio = voice_cfg.get("ref_audio")
+    if voice_clone_prompt is None and ref_audio is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Clone voice config requires ref_audio or speaker_pt/voice_clone_pt",
+        )
+    return dict(
+        text=text,
+        language=_resolve_language(voice_cfg, request_language),
+        ref_audio=ref_audio,
+        ref_text=voice_cfg.get("ref_text", ""),
+        instruct=_resolve_instruct(voice_cfg, request_instruct),
+        voice_clone_prompt=voice_clone_prompt,
+        seed=request_seed,
+    )
+
+
+async def _parse_speech_http_request(request: Request) -> tuple[SpeechRequest, Optional[dict]]:
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith("application/json"):
+        try:
+            payload = await request.json()
+            return SpeechRequest.model_validate(payload), None
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+
+    if content_type.startswith("multipart/form-data") or content_type.startswith("application/x-www-form-urlencoded"):
+        form = await request.form()
+        payload = {}
+        for field_name in SpeechRequest.model_fields:
+            value = form.get(field_name)
+            if value is None or _is_upload_file(value):
+                continue
+            payload[field_name] = value
+        try:
+            req = SpeechRequest.model_validate(payload)
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+
+        pt_upload = form.get("voice_clone_pt") or form.get("speaker_pt") or form.get("pt")
+        request_voice_clone_prompt = None
+        if pt_upload is not None:
+            if not _is_upload_file(pt_upload):
+                raise HTTPException(status_code=400, detail="voice_clone_pt must be uploaded as a file")
+            request_voice_clone_prompt = _voice_clone_prompt_from_pt_bytes(await pt_upload.read())
+        return req, request_voice_clone_prompt
+
+    raise HTTPException(
+        status_code=415,
+        detail="Unsupported Content-Type. Use application/json or multipart/form-data",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +353,7 @@ async def _stream_chunks(
     request_instruct: Optional[str],
     request_language: Optional[str],
     request_seed: Optional[int],
+    request_voice_clone_prompt: Optional[dict],
 ) -> AsyncGenerator[bytes, None]:
     """
     Run generate_voice_clone_streaming in a background thread and yield
@@ -210,15 +366,18 @@ async def _stream_chunks(
         try:
             with _model_lock:
                 if generation_mode == "clone":
-                    generator = tts_model.generate_voice_clone_streaming(
+                    kwargs = _build_clone_generation_kwargs(
+                        voice_cfg=voice_cfg,
                         text=text,
-                        language=_resolve_language(voice_cfg, request_language),
-                        ref_audio=voice_cfg["ref_audio"],
-                        ref_text=voice_cfg.get("ref_text", ""),
+                        request_instruct=request_instruct,
+                        request_language=request_language,
+                        request_seed=request_seed,
+                        request_voice_clone_prompt=request_voice_clone_prompt,
+                    )
+                    generator = tts_model.generate_voice_clone_streaming(
                         chunk_size=voice_cfg.get("chunk_size", 12),
-                        instruct=_resolve_instruct(voice_cfg, request_instruct),
                         non_streaming_mode=False,
-                        seed=request_seed,
+                        **kwargs,
                     )
                 elif generation_mode == "custom":
                     generator = tts_model.generate_custom_voice_streaming(
@@ -276,12 +435,13 @@ async def list_voices():
     return {"voices": list(voices.keys()), "default_voice": default_voice, "mode": generation_mode}
 
 
-@app.post("/v1/audio/speech")
-async def create_speech(req: SpeechRequest):
+async def create_speech(req: SpeechRequest, request_voice_clone_prompt: Optional[dict] = None):
     if tts_model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
     if not req.input.strip():
         raise HTTPException(status_code=400, detail="'input' text is empty")
+    if request_voice_clone_prompt is not None and generation_mode != "clone":
+        raise HTTPException(status_code=400, detail="voice_clone_pt is only supported when the server runs in clone mode")
 
     voice_cfg = resolve_voice(req.voice)
     fmt = req.response_format.lower()
@@ -305,13 +465,16 @@ async def create_speech(req: SpeechRequest):
         def _generate():
             with _model_lock:
                 if generation_mode == "clone":
-                    return tts_model.generate_voice_clone(
+                    kwargs = _build_clone_generation_kwargs(
+                        voice_cfg=voice_cfg,
                         text=req.input,
-                        language=_resolve_language(voice_cfg, req.language),
-                        ref_audio=voice_cfg["ref_audio"],
-                        ref_text=voice_cfg.get("ref_text", ""),
-                        instruct=_resolve_instruct(voice_cfg, req.instruct),
-                        seed=req.seed,
+                        request_instruct=req.instruct,
+                        request_language=req.language,
+                        request_seed=req.seed,
+                        request_voice_clone_prompt=request_voice_clone_prompt,
+                    )
+                    return tts_model.generate_voice_clone(
+                        **kwargs,
                     )
                 if generation_mode == "custom":
                     return tts_model.generate_custom_voice(
@@ -331,10 +494,60 @@ async def create_speech(req: SpeechRequest):
     async def audio_stream():
         if fmt == "wav":
             yield _wav_header(SAMPLE_RATE)  # stream with unknown data length
-        async for raw_chunk in _stream_chunks(voice_cfg, req.input, req.instruct, req.language, req.seed):
+        async for raw_chunk in _stream_chunks(
+            voice_cfg,
+            req.input,
+            req.instruct,
+            req.language,
+            req.seed,
+            request_voice_clone_prompt,
+        ):
             yield raw_chunk
 
     return StreamingResponse(audio_stream(), media_type=content_type)
+
+
+@app.post("/v1/audio/speech")
+async def create_speech_endpoint(request: Request):
+    req, request_voice_clone_prompt = await _parse_speech_http_request(request)
+    return await create_speech(req, request_voice_clone_prompt=request_voice_clone_prompt)
+
+
+@app.post("/v1/audio/voice-clone/pt")
+async def create_voice_clone_pt(
+    ref_audio: UploadFile = File(...),
+    filename: Optional[str] = Form(None),
+):
+    if tts_model is None:
+        raise HTTPException(status_code=503, detail="Model not loaded")
+    if generation_mode != "clone":
+        raise HTTPException(status_code=400, detail="voice clone pt extraction requires clone mode")
+    if not hasattr(tts_model, "extract_speaker_embedding"):
+        raise HTTPException(status_code=400, detail="Loaded model does not support speaker embedding extraction")
+
+    audio_bytes = await ref_audio.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded ref_audio file is empty")
+
+    suffix = Path(ref_audio.filename or "reference.wav").suffix or ".wav"
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix="voice-clone-", suffix=suffix, delete=False) as temp:
+            temp.write(audio_bytes)
+            temp_path = temp.name
+        with _model_lock:
+            speaker_embedding = tts_model.extract_speaker_embedding(temp_path)
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
+
+    download_name = filename or "speaker.pt"
+    headers = {"Content-Disposition": f'attachment; filename="{Path(download_name).name}"'}
+    return Response(
+        content=_serialize_speaker_embedding(speaker_embedding),
+        media_type="application/octet-stream",
+        headers=headers,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -363,7 +576,7 @@ def _parse_args():
         "--voices",
         default=os.environ.get("QWEN_TTS_VOICES"),
         metavar="FILE",
-        help="JSON file mapping voice names to {ref_audio, ref_text, language}",
+        help="JSON file mapping voice names to {ref_audio, ref_text, language} or {speaker_pt, language}",
     )
     p.add_argument(
         "--ref-audio",
@@ -432,20 +645,35 @@ def _run_startup_warmup(warmup_text: str, warmup_max_new_tokens: int) -> None:
 
     if not voices:
         logger.warning("Skipping startup warmup because no voices are configured")
+        startup_warmup_seconds = 0.0
+        startup_warmup_completed = True
         return
 
     voice_name = default_voice or next(iter(voices))
     voice_cfg = resolve_voice(voice_name)
+    if generation_mode == "clone" and not _voice_cfg_has_clone_source(voice_cfg):
+        logger.warning(
+            "Skipping startup warmup because clone voice %s has no static ref_audio or speaker_pt",
+            voice_name,
+        )
+        startup_warmup_seconds = 0.0
+        startup_warmup_completed = True
+        return
     started = time.perf_counter()
 
     with _model_lock:
         if generation_mode == "clone":
-            tts_model.generate_voice_clone(
+            kwargs = _build_clone_generation_kwargs(
+                voice_cfg=voice_cfg,
                 text=warmup_text,
-                language=voice_cfg.get("language", "Auto"),
-                ref_audio=voice_cfg["ref_audio"],
-                ref_text=voice_cfg.get("ref_text", ""),
+                request_instruct=None,
+                request_language=voice_cfg.get("language", "Auto"),
+                request_seed=None,
+                request_voice_clone_prompt=None,
+            )
+            tts_model.generate_voice_clone(
                 max_new_tokens=warmup_max_new_tokens,
+                **kwargs,
             )
         elif generation_mode == "custom":
             tts_model.generate_custom_voice(
@@ -505,11 +733,16 @@ def main():
             default_voice = next(iter(voices))
             logger.info("Using single clone voice from --ref-audio: %s", args.ref_audio)
         else:
-            print(
-                "ERROR: clone mode requires --ref-audio <file> or --voices <config.json>",
-                file=sys.stderr,
+            voices = {
+                args.default_voice or "dynamic": {
+                    "language": args.language,
+                    "chunk_size": args.chunk_size,
+                }
+            }
+            default_voice = next(iter(voices))
+            logger.info(
+                "Clone mode started without static ref_audio/voices; expecting request-level voice_clone_pt uploads"
             )
-            sys.exit(1)
     elif generation_mode == "custom":
         supported_speakers = tts_model.model.get_supported_speakers() or []
         if not supported_speakers:

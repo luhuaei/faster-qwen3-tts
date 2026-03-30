@@ -146,7 +146,26 @@ curl http://localhost:8000/v1/audio/speech \
     --output speech.wav
 ```
 
-To expose multiple voices, pass a JSON file mapping names to reference audio configs — each `voice` value in a request will be routed to the matching entry (`--voices voices.json`). You can also pass an optional request-level `instruct` string on `/v1/audio/speech`; it overrides any static `instruct` configured on the selected voice. WAV and PCM formats stream chunks as they are generated; MP3 requires `pydub`.
+To expose multiple voices, pass a JSON file mapping names to reference audio configs — each `voice` value in a request will be routed to the matching entry (`--voices voices.json`). Each voice may use `ref_audio`/`ref_text` or a precomputed `speaker_pt`. You can also pass an optional request-level `instruct` string on `/v1/audio/speech`; it overrides any static `instruct` configured on the selected voice. WAV and PCM formats stream chunks as they are generated; MP3 requires `pydub`.
+
+For dynamic voice cloning in clone mode, the server also accepts `multipart/form-data` uploads with a request-scoped `voice_clone_pt` file. That lets the caller manage speaker embeddings outside the server:
+
+```bash
+# 1. Generate a reusable speaker pt file from reference audio
+curl http://localhost:8000/v1/audio/voice-clone/pt \
+    -F "ref_audio=@ref_audio.wav" \
+    -F "filename=speaker.pt" \
+    --output speaker.pt
+
+# 2. Reuse that pt file on later synthesis requests
+curl http://localhost:8000/v1/audio/speech \
+    -F "model=tts-1" \
+    -F "input=Hello from a precomputed speaker embedding." \
+    -F "voice=alloy" \
+    -F "response_format=wav" \
+    -F "voice_clone_pt=@speaker.pt;type=application/octet-stream" \
+    --output speech.wav
+```
 
 ## Results
 
