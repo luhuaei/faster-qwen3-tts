@@ -132,6 +132,38 @@ def test_clone_request_seed_is_passed_to_non_streaming_generation(monkeypatch):
     assert model.clone_calls[0]["seed"] == 1234
 
 
+def test_clone_request_supports_opus_non_streaming_generation(monkeypatch):
+    model = DummyCloneModel()
+    monkeypatch.setattr(openai_server, "tts_model", model)
+    monkeypatch.setattr(openai_server, "generation_mode", "clone")
+    monkeypatch.setattr(openai_server, "_to_opus_bytes", lambda _pcm, _sr: b"fake-opus")
+    monkeypatch.setattr(
+        openai_server,
+        "voices",
+        {
+            "alloy": {
+                "ref_audio": "ref.wav",
+                "ref_text": "hello",
+                "language": "English",
+            }
+        },
+    )
+    monkeypatch.setattr(openai_server, "default_voice", "alloy")
+    monkeypatch.setattr(openai_server, "SAMPLE_RATE", 24000)
+
+    request = openai_server.SpeechRequest(
+        input="hello world",
+        voice="alloy",
+        response_format="opus",
+    )
+
+    response = asyncio.run(openai_server.create_speech(request))
+
+    assert response.media_type == "audio/ogg"
+    assert response.body == b"fake-opus"
+    assert model.clone_calls[0]["text"] == "hello world"
+
+
 def test_custom_request_instruct_overrides_voice_default_for_streaming(monkeypatch):
     model = DummyCustomModel()
     monkeypatch.setattr(openai_server, "tts_model", model)

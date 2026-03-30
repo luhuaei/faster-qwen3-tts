@@ -146,7 +146,7 @@ curl http://localhost:8000/v1/audio/speech \
     --output speech.wav
 ```
 
-To expose multiple voices, pass a JSON file mapping names to reference audio configs — each `voice` value in a request will be routed to the matching entry (`--voices voices.json`). Each voice may use `ref_audio`/`ref_text` or a precomputed `speaker_pt`. You can also pass an optional request-level `instruct` string on `/v1/audio/speech`; it overrides any static `instruct` configured on the selected voice. WAV and PCM formats stream chunks as they are generated; MP3 requires `pydub`.
+To expose multiple voices, pass a JSON file mapping names to reference audio configs — each `voice` value in a request will be routed to the matching entry (`--voices voices.json`). Each voice may use `ref_audio`/`ref_text` or a precomputed `speaker_pt`. You can also pass an optional request-level `instruct` string on `/v1/audio/speech`; it overrides any static `instruct` configured on the selected voice. WAV and PCM formats stream chunks as they are generated; MP3 and Opus are returned after full audio generation and require `pydub` plus `ffmpeg` support.
 
 For dynamic voice cloning in clone mode, the server also accepts `multipart/form-data` uploads with a request-scoped `voice_clone_pt` file. That lets the caller manage speaker embeddings outside the server:
 

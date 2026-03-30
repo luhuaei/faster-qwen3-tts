@@ -9,7 +9,7 @@ ENV TORCHINDUCTOR_CACHE_DIR=/tmp/torch_inductor
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-venv \
-    git ffmpeg libsndfile1 sox \
+    git ffmpeg libsndfile1 opus-tools sox \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

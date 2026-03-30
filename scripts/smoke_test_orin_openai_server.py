@@ -26,6 +26,14 @@ CONTAINER_NAME = "faster-qwen3-tts-aipod-smoke"
 PORT = int(os.environ.get("ORIN_AIPOD_PORT", "18000"))
 TEXT = os.environ.get("ORIN_AIPOD_TEXT", "今天的风比昨天轻一点，适合慢慢说话。")
 VOICE = os.environ.get("ORIN_AIPOD_VOICE", "vivian")
+RESPONSE_FORMAT = os.environ.get("ORIN_AIPOD_RESPONSE_FORMAT", "wav").strip().lower() or "wav"
+
+RESPONSE_CONTENT_TYPES = {
+    "wav": "audio/wav",
+    "pcm": "audio/pcm",
+    "mp3": "audio/mpeg",
+    "opus": "audio/ogg",
+}
 
 
 class RemoteHost:
@@ -94,6 +102,12 @@ def wait_for_json(url: str, timeout_s: int) -> dict:
 
 
 def main() -> None:
+    if RESPONSE_FORMAT not in RESPONSE_CONTENT_TYPES:
+        raise ValueError(
+            f"Unsupported ORIN_AIPOD_RESPONSE_FORMAT={RESPONSE_FORMAT!r}; "
+            f"use one of {', '.join(sorted(RESPONSE_CONTENT_TYPES))}"
+        )
+
     remote = RemoteHost()
     output_dir = Path("benchmarks/results/orin_aipod_smoke") / time.strftime("%Y%m%d-%H%M%S")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -144,19 +158,20 @@ def main() -> None:
                 "model": "tts-1",
                 "input": TEXT,
                 "voice": VOICE,
-                "response_format": "wav",
+                "response_format": RESPONSE_FORMAT,
             },
             ensure_ascii=False,
         ).encode("utf-8")
         request = urllib.request.Request(
             base_url + "/v1/audio/speech",
             data=payload,
-            headers={"Content-Type": "application/json", "Accept": "audio/wav"},
+            headers={"Content-Type": "application/json", "Accept": RESPONSE_CONTENT_TYPES[RESPONSE_FORMAT]},
             method="POST",
         )
         request_started = time.time()
         with NO_PROXY_OPENER.open(request, timeout=600) as response:
             status_code = response.status
+            content_type = response.headers.get("Content-Type", "")
             first_chunk = response.read(4096)
             first_chunk_seconds = time.time() - request_started
             chunks = [first_chunk]
@@ -172,12 +187,14 @@ def main() -> None:
             "health": health,
             "voices": voices,
             "status_code": status_code,
+            "content_type": content_type,
+            "response_format": RESPONSE_FORMAT,
             "first_chunk_seconds": first_chunk_seconds,
             "request_seconds": time.time() - request_started,
             "audio_bytes": len(audio),
         }
         (output_dir / "result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        (output_dir / "output.wav").write_bytes(audio)
+        (output_dir / f"output.{RESPONSE_FORMAT}").write_bytes(audio)
         print(json.dumps(result, ensure_ascii=False, indent=2))
     finally:
         if telemetry_pid:

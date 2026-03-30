@@ -34,7 +34,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 WORKDIR /opt/build
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg libsndfile1 sox \
+    && apt-get install -y --no-install-recommends ffmpeg libsndfile1 opus-tools sox \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=prebuilt_app /opt/faster-qwen3-tts-venv /opt/faster-qwen3-tts-venv

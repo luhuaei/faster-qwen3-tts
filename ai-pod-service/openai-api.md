@@ -144,7 +144,7 @@ Accept: audio/wav
 - `model`: 兼容字段，当前服务接受但不用于切换模型，建议固定传 `tts-1`
 - `input`: 要合成的文本，不能为空
 - `voice`: 音色名称，来自 `/v1/audio/voices`
-- `response_format`: 支持 `wav`、`pcm`、`mp3`
+- `response_format`: 支持 `wav`、`pcm`、`mp3`、`opus`
 - `speed`: 当前版本仅接受该字段，但实际未生效
 - `instruct`: 可选的自定义指令文本，用于控制语气、风格、节奏或口音倾向
 
@@ -160,6 +160,7 @@ Accept: audio/wav
 - `wav`: 流式返回，`Content-Type: audio/wav`
 - `pcm`: 流式返回，`Content-Type: audio/pcm`
 - `mp3`: 非流式返回，`Content-Type: audio/mpeg`
+- `opus`: 非流式返回，`Content-Type: audio/ogg`
 
 ### 3.1 使用 multipart 上传 `pt` 文件做动态声音克隆
 
@@ -222,10 +223,20 @@ curl http://127.0.0.1:8000/v1/audio/speech \
   --output speech.mp3
 ```
 
+#### Opus 示例
+
+```bash
+curl http://127.0.0.1:8000/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{"model":"tts-1","input":"Hello world.","voice":"vivian","response_format":"opus"}' \
+  --output speech.opus
+```
+
 说明：
 
 - `mp3` 返回前会先生成完整音频，再进行编码
-- 因此 `mp3` 不适合低延迟首包场景
+- `opus` 同样会先生成完整音频，再编码成 Ogg Opus
+- 因此 `mp3` 和 `opus` 都不适合低延迟首包场景
 
 ## 4. 生成 speaker pt 文件
 
@@ -358,7 +369,7 @@ const blob = new Blob(chunks, { type: "audio/wav" });
 
 ```json
 {
-  "detail": "response_format 'aac' not supported. Use: wav, pcm, mp3"
+  "detail": "response_format 'aac' not supported. Use: wav, pcm, mp3, opus"
 }
 ```
 
@@ -424,7 +435,7 @@ const blob = new Blob(chunks, { type: "audio/wav" });
 
 下载成品文件场景：
 
-- 使用 `response_format=mp3` 或 `wav`
+- 使用 `response_format=mp3`、`opus` 或 `wav`
 
 ## 9. 最小可用示例
 

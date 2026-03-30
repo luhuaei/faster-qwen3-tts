@@ -100,7 +100,7 @@ class SpeechRequest(BaseModel):
     model: str = "tts-1"
     input: str
     voice: str = "alloy"
-    response_format: str = "wav"  # wav | pcm | mp3
+    response_format: str = "wav"  # wav | pcm | mp3 | opus
     speed: float = 1.0           # accepted but not yet applied
     instruct: Optional[str] = None
     language: Optional[str] = None
@@ -305,6 +305,32 @@ def _to_mp3_bytes(pcm: np.ndarray, sample_rate: int) -> bytes:
     return buf.getvalue()
 
 
+def _to_opus_bytes(pcm: np.ndarray, sample_rate: int) -> bytes:
+    """Convert float32 numpy array to Ogg Opus bytes (requires pydub + ffmpeg/libopus)."""
+    try:
+        from pydub import AudioSegment
+    except ImportError:
+        raise HTTPException(
+            status_code=400,
+            detail="response_format='opus' requires pydub: pip install pydub",
+        )
+    segment = AudioSegment(
+        _to_pcm16(pcm),
+        frame_rate=sample_rate,
+        sample_width=2,
+        channels=1,
+    )
+    buf = io.BytesIO()
+    try:
+        segment.export(buf, format="ogg", codec="libopus")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=500,
+            detail="response_format='opus' requires ffmpeg with libopus encoder support",
+        ) from exc
+    return buf.getvalue()
+
+
 # ---------------------------------------------------------------------------
 # Voice resolution
 # ---------------------------------------------------------------------------
@@ -450,16 +476,17 @@ async def create_speech(req: SpeechRequest, request_voice_clone_prompt: Optional
         "wav": "audio/wav",
         "pcm": "audio/pcm",
         "mp3": "audio/mpeg",
+        "opus": "audio/ogg",
     }
     if fmt not in _CONTENT_TYPES:
         raise HTTPException(
             status_code=400,
-            detail=f"response_format {fmt!r} not supported. Use: wav, pcm, mp3",
+            detail=f"response_format {fmt!r} not supported. Use: wav, pcm, mp3, opus",
         )
     content_type = _CONTENT_TYPES[fmt]
 
-    # --- MP3: generate all audio, then encode (non-streaming) ---
-    if fmt == "mp3":
+    # --- MP3 / Opus: generate all audio, then encode (non-streaming) ---
+    if fmt in {"mp3", "opus"}:
         loop = asyncio.get_event_loop()
 
         def _generate():
@@ -488,7 +515,8 @@ async def create_speech(req: SpeechRequest, request_voice_clone_prompt: Optional
 
         audio_arrays, sr = await loop.run_in_executor(None, _generate)
         audio = audio_arrays[0] if audio_arrays else np.zeros(1, dtype=np.float32)
-        return Response(content=_to_mp3_bytes(audio, sr), media_type=content_type)
+        encoder = _to_mp3_bytes if fmt == "mp3" else _to_opus_bytes
+        return Response(content=encoder(audio, sr), media_type=content_type)
 
     # --- WAV / PCM: stream chunks as they are generated ---
     async def audio_stream():
