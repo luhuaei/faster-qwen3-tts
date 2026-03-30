@@ -15,8 +15,8 @@ import paramiko
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REMOTE_ROOT = "/home/nvidia/faster-qwen3-tts-aipod"
-DEFAULT_IMAGE = "lzcbox-90fc188b.lan:5001/x/faster-qwen3-tts:0.6b-custom-openai-orin-v1"
-DEFAULT_MODEL_NAME = "Qwen3-TTS-12Hz-0.6B-CustomVoice"
+DEFAULT_IMAGE = "lzcbox-90fc188b.lan:5001/x/faster-qwen3-tts:0.6b-base-clone-openai-orin-v5"
+DEFAULT_MODEL_NAME = "Qwen3-TTS-12Hz-0.6B-Base"
 DEFAULT_MODEL_DOWNLOADER_IMAGE = "lzcbox-90fc188b.lan:5001/x/faster-qwen3-tts:0.6b-custom-openai-orin-v1"
 DEFAULT_PREBUILT_APP_IMAGE = "127.0.0.1:5001/x/faster-qwen3-tts:0.6b-custom-openai-orin-v1"
 
@@ -244,6 +244,8 @@ def build_context_tarball() -> Path:
             "MANIFEST.in",
             "README.md",
             "pyproject.toml",
+            "voices.json",
+            "voices",
             "examples/openai_server.py",
             "faster_qwen3_tts",
         ]:
@@ -257,11 +259,11 @@ def main() -> None:
     prebuilt_app_image = os.environ.get("ORIN_AIPOD_PREBUILT_APP_IMAGE", "").strip()
     image_name = os.environ.get("ORIN_AIPOD_IMAGE", DEFAULT_IMAGE).strip() or DEFAULT_IMAGE
     model_name = os.environ.get("ORIN_AIPOD_MODEL_NAME", DEFAULT_MODEL_NAME).strip() or DEFAULT_MODEL_NAME
-    server_mode = os.environ.get("ORIN_AIPOD_MODE", "custom").strip() or "custom"
+    server_mode = os.environ.get("ORIN_AIPOD_MODE", "clone").strip() or "clone"
     default_voice = os.environ.get(
         "ORIN_AIPOD_DEFAULT_VOICE",
-        "vivian" if server_mode == "custom" else "dynamic",
-    ).strip() or ("vivian" if server_mode == "custom" else "dynamic")
+        "vivian",
+    ).strip() or "vivian"
     push_enabled = os.environ.get("ORIN_AIPOD_PUSH", "1").strip().lower() not in {"0", "false", "no"}
     model_source = os.environ.get("REMOTE_MODEL_SOURCE", "").strip()
     remote = RemoteHost(target)

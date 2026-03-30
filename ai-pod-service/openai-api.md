@@ -54,8 +54,8 @@ curl http://127.0.0.1:8000/health
   "status": "ok",
   "ready": true,
   "model_loaded": true,
-  "mode": "custom",
-  "voices": ["aiden", "dylan", "vivian"],
+  "mode": "clone",
+  "voices": ["dylan", "eric", "ono_anna", "ryan", "serena", "sohee", "uncle_fu", "vivian"],
   "startup_warmup_enabled": true,
   "startup_warmup_completed": true,
   "startup_warmup_seconds": 15.11
@@ -92,7 +92,6 @@ curl http://127.0.0.1:8000/v1/audio/voices
 ```json
 {
   "voices": [
-    "aiden",
     "dylan",
     "eric",
     "ono_anna",
@@ -103,7 +102,7 @@ curl http://127.0.0.1:8000/v1/audio/voices
     "vivian"
   ],
   "default_voice": "vivian",
-  "mode": "custom"
+  "mode": "clone"
 }
 ```
 
@@ -112,6 +111,8 @@ curl http://127.0.0.1:8000/v1/audio/voices
 - `voice` 请求参数必须使用这里返回的名称
 - 若请求里传入不存在的 `voice`，服务会尝试回退到 `default_voice`
 - 若没有可回退的默认音色，则返回 `400`
+- 当前 AI Pod 推荐镜像内置了 8 个音色，配置文件位于 `/opt/build/faster-qwen3-tts/voices.json`
+- 这 8 个内置音色来自 `~/lazycat-reader/voices`：`dylan`、`eric`、`ono_anna`、`ryan`、`serena`、`sohee`、`uncle_fu`、`vivian`
 
 ## 3. 文本转语音
 
@@ -186,11 +187,14 @@ Accept: audio/wav
 curl http://127.0.0.1:8000/v1/audio/speech \
   -F "model=tts-1" \
   -F "input=今天我们直接复用上传的 speaker pt 来合成语音。" \
-  -F "voice=alloy" \
+  -F "voice=dynamic" \
   -F "response_format=wav" \
   -F "voice_clone_pt=@speaker.pt;type=application/octet-stream" \
   --output speech.wav
 ```
+
+当前 AI Pod 推荐镜像已经内置 8 个静态音色，配置文件路径为 `/opt/build/faster-qwen3-tts/voices.json`。
+如果你不上传 `voice_clone_pt`，直接把 `voice` 设成 `dylan`、`eric`、`ono_anna`、`ryan`、`serena`、`sohee`、`uncle_fu`、`vivian` 之一即可。
 
 ### 3.2 非流式调用
 
@@ -385,7 +389,7 @@ const blob = new Blob(chunks, { type: "audio/wav" });
 
 ```json
 {
-  "detail": "Voice 'unknown' is not configured. Available voices: ['aiden', 'vivian']"
+  "detail": "Voice 'unknown' is not configured. Available voices: ['dylan', 'eric', 'ono_anna', 'ryan', 'serena', 'sohee', 'uncle_fu', 'vivian']"
 }
 ```
 

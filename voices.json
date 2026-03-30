@@ -1,0 +1,66 @@
+{
+  "dylan": {
+    "speaker_pt": "/opt/build/faster-qwen3-tts/voices/dylan.pt",
+    "language": "Chinese",
+    "instruct": "请用三十五到四十五岁之间的成熟北京男声朗读，像在胡同里长大的本地北京人自然开口打招呼，带自然的北京味儿和生活气息，声音要稳重、有分寸、有点老城的松弛感，绝对不要像小孩，不要显得稚嫩，不要油滑，不要夸张表演，开口自然，吐字清晰。",
+    "style": "北京味儿十足的",
+    "nickname": "京澈",
+    "text": "你好呀，我是北京味儿十足的京澈，欢迎使用懒猫微服"
+  },
+  "eric": {
+    "speaker_pt": "/opt/build/faster-qwen3-tts/voices/eric.pt",
+    "language": "Chinese",
+    "instruct": "请直接用地道的成都四川话朗读整句，优先保证整句顺口自然，字要连贯、清楚、自然，不要逐字生硬地念，要顺着口气自然连起来。尽量不要普通话化，不要播音腔，保留鲜明的成都四川话味道。",
+    "style": "成都味儿的",
+    "nickname": "川宁",
+    "text": "你好呀，我是成都味儿的川宁，欢迎使用懒猫微服"
+  },
+  "ono_anna": {
+    "speaker_pt": "/opt/build/faster-qwen3-tts/voices/ono_anna.pt",
+    "language": "Chinese",
+    "instruct": "不要哭腔、不要喘息、直接开口",
+    "style": "灵巧俏皮的",
+    "nickname": "柚奈",
+    "text": "你好呀，我是灵巧俏皮的柚奈，欢迎使用懒猫微服"
+  },
+  "ryan": {
+    "speaker_pt": "/opt/build/faster-qwen3-tts/voices/ryan.pt",
+    "language": "Chinese",
+    "instruct": "请用年轻、有朝气、外向但不吵闹的男声朗读，语气明亮利落，像活力十足的品牌欢迎语，开口直接，节奏轻快，吐字清晰，不要浮夸。",
+    "style": "朝气外放的",
+    "nickname": "星燃",
+    "text": "你好呀，我是朝气外放的星燃，欢迎使用懒猫微服"
+  },
+  "serena": {
+    "speaker_pt": "/opt/build/faster-qwen3-tts/voices/serena.pt",
+    "language": "Chinese",
+    "instruct": "请用温柔、安抚、柔和但不拖沓的女声朗读，像贴心陪伴型旁白在欢迎用户，气息平稳，开口自然，吐字清晰，不要撒娇。",
+    "style": "柔润安抚的",
+    "nickname": "沐柔",
+    "text": "你好呀，我是柔润安抚的沐柔，欢迎使用懒猫微服"
+  },
+  "sohee": {
+    "speaker_pt": "/opt/build/faster-qwen3-tts/voices/sohee.pt",
+    "language": "Chinese",
+    "instruct": "请用暖甜、轻盈、友好的女声朗读，语气明快但克制，像清新自然的欢迎语，开口直接，吐字清晰，不要过度可爱。",
+    "style": "暖甜轻盈的",
+    "nickname": "熙暖",
+    "text": "你好呀，我是暖甜轻盈的熙暖，欢迎使用懒猫微服"
+  },
+  "uncle_fu": {
+    "speaker_pt": "/opt/build/faster-qwen3-tts/voices/uncle_fu.pt",
+    "language": "Chinese",
+    "instruct": "请用年长的说书先生风格朗读，声音要比中年更成熟一些，带一点岁月沉淀后的沧桑感和老派从容感，语气沉稳老练，像阅历很深的评书先生在开场，抑扬顿挫自然，吐字清晰，不要夸张，不要油腔滑调，不要显得年轻。",
+    "style": "厚稳从容的",
+    "nickname": "福叔",
+    "text": "你好呀，我是厚稳从容的福叔，欢迎使用懒猫微服"
+  },
+  "vivian": {
+    "speaker_pt": "/opt/build/faster-qwen3-tts/voices/vivian.pt",
+    "language": "Chinese",
+    "instruct": "请用清透、利落、专业的女声朗读，语气明亮自信，像现代品牌的开场提示音，开口直接，节奏干净，吐字清晰，不要拖腔。",
+    "style": "清透利落的",
+    "nickname": "清禾",
+    "text": "你好呀，我是清透利落的清禾，欢迎使用懒猫微服"
+  }
+}

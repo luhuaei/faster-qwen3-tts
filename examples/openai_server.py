@@ -26,7 +26,7 @@ Voices config (voices.json):
     {
         "alloy": {"ref_audio": "voice.wav", "ref_text": "...", "language": "English"},
         "echo":  {"ref_audio": "voice2.wav", "ref_text": "...", "language": "English"},
-        "cached": {"speaker_pt": "speaker.pt", "language": "English"}
+        "cached": {"speaker_pt": "/opt/build/faster-qwen3-tts/voices/vivian.pt", "language": "Chinese"}
     }
 
 API usage:
@@ -162,28 +162,37 @@ def _voice_clone_prompt_from_pt_bytes(payload: bytes) -> dict:
 
 
 def _load_voice_clone_prompt_from_path(path: str) -> dict:
-    cached = _voice_clone_pt_cache.get(path)
+    cache_key = f"path:{path}"
+    cached = _voice_clone_pt_cache.get(cache_key)
     if cached is not None:
         return cached
     prompt = _voice_clone_prompt_from_pt_bytes(Path(path).read_bytes())
-    _voice_clone_pt_cache[path] = prompt
+    _voice_clone_pt_cache[cache_key] = prompt
     return prompt
+
+
+def _resolve_static_speaker_pt_value(voice_cfg: dict) -> Optional[str]:
+    for key in ("speaker_pt", "voice_clone_pt", "pt"):
+        value = voice_cfg.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def _resolve_clone_voice_prompt(voice_cfg: dict, request_voice_clone_prompt: Optional[dict]) -> Optional[dict]:
     if request_voice_clone_prompt is not None:
         return request_voice_clone_prompt
 
-    speaker_pt = voice_cfg.get("speaker_pt") or voice_cfg.get("voice_clone_pt") or voice_cfg.get("pt")
-    if not speaker_pt:
-        return None
-    return _load_voice_clone_prompt_from_path(speaker_pt)
+    speaker_pt = _resolve_static_speaker_pt_value(voice_cfg)
+    if speaker_pt:
+        return _load_voice_clone_prompt_from_path(speaker_pt)
+    return None
 
 
 def _voice_cfg_has_clone_source(voice_cfg: dict) -> bool:
     if voice_cfg.get("ref_audio"):
         return True
-    if voice_cfg.get("speaker_pt") or voice_cfg.get("voice_clone_pt") or voice_cfg.get("pt"):
+    if _resolve_static_speaker_pt_value(voice_cfg):
         return True
     return False
 
@@ -201,7 +210,7 @@ def _build_clone_generation_kwargs(
     if voice_clone_prompt is None and ref_audio is None:
         raise HTTPException(
             status_code=400,
-            detail="Clone voice config requires ref_audio or speaker_pt/voice_clone_pt",
+            detail="Clone voice config requires ref_audio or speaker_pt/voice_clone_pt/pt",
         )
     return dict(
         text=text,

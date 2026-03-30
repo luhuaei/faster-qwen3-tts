@@ -2,10 +2,10 @@ ARG BASE_IMAGE=127.0.0.1:5001/x/lzc-aipod-vllm:bffa39b-orin
 ARG PIP_INDEX_URL=https://pypi.jetson-ai-lab.io/jp6/cu126/+simple
 ARG PIP_EXTRA_INDEX_URL=
 ARG TORCHAUDIO_SPEC=torchaudio==2.10.0
-ARG MODEL_NAME=Qwen3-TTS-12Hz-0.6B-CustomVoice
-ARG MODEL_DIR=/opt/models/Qwen3-TTS-12Hz-0.6B-CustomVoice
-ARG QWEN_TTS_MODEL=/opt/models/Qwen3-TTS-12Hz-0.6B-CustomVoice
-ARG QWEN_TTS_MODE=custom
+ARG MODEL_NAME=Qwen3-TTS-12Hz-0.6B-Base
+ARG MODEL_DIR=/opt/models/Qwen3-TTS-12Hz-0.6B-Base
+ARG QWEN_TTS_MODEL=/opt/models/Qwen3-TTS-12Hz-0.6B-Base
+ARG QWEN_TTS_MODE=clone
 ARG QWEN_TTS_DEFAULT_VOICE=vivian
 FROM ${BASE_IMAGE}
 
@@ -29,6 +29,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     XDG_CACHE_HOME=/root/.cache \
     QWEN_TTS_MODEL=${QWEN_TTS_MODEL} \
     QWEN_TTS_MODE=${QWEN_TTS_MODE} \
+    QWEN_TTS_VOICES=/opt/build/faster-qwen3-tts/voices.json \
     QWEN_TTS_DEFAULT_VOICE=${QWEN_TTS_DEFAULT_VOICE} \
     QWEN_TTS_LANGUAGE=Auto \
     QWEN_TTS_CHUNK_SIZE=8 \
@@ -52,6 +53,8 @@ RUN grep -v '^torchaudio$' /tmp/faster-qwen3-tts-requirements.txt > /tmp/faster-
     && rm -rf /root/.cache/uv
 
 COPY MANIFEST.in README.md pyproject.toml /opt/build/faster-qwen3-tts/
+COPY voices.json /opt/build/faster-qwen3-tts/voices.json
+COPY voices /opt/build/faster-qwen3-tts/voices
 COPY faster_qwen3_tts /opt/build/faster-qwen3-tts/faster_qwen3_tts
 COPY examples/openai_server.py /opt/build/faster-qwen3-tts/examples/openai_server.py
 COPY models/${MODEL_NAME} ${MODEL_DIR}

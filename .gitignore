@@ -3,6 +3,7 @@ sample_*.wav
 *.wav
 !ref_audio.wav
 *.json
+!voices.json
 __pycache__/
 *.pyc
 .venv/

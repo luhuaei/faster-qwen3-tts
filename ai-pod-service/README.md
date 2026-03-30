@@ -12,13 +12,15 @@ API 文档：
 
 Image tag:
 
-- `lzcbox-90fc188b.lan:5001/x/faster-qwen3-tts:0.6b-custom-openai-orin-v1`
+- `lzcbox-90fc188b.lan:5001/x/faster-qwen3-tts:0.6b-base-clone-openai-orin-v5`
 
 Key runtime defaults:
 
-- model: `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice` baked into the image
-- mode: `custom`
-- default voice: `vivian` when available, otherwise first supported speaker
+- model: `Qwen/Qwen3-TTS-12Hz-0.6B-Base` baked into the image
+- mode: `clone`
+- builtin voices: `dylan` `eric` `ono_anna` `ryan` `serena` `sohee` `uncle_fu` `vivian`
+- voices config: bundled at `/opt/build/faster-qwen3-tts/voices.json`
+- default voice: `vivian`
 - chunk size: `8`
 
 The image can be rebuilt and pushed from this repo with:
