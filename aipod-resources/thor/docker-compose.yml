@@ -1,6 +1,6 @@
 services:
   faster-qwen3-tts:
-    image: registry.lazycat.cloud/x/faster-qwen3-tts:0.6b-base-clone-openai-orin
+    image: registry.lazycat.cloud/x/faster-qwen3-tts:0.6b-base-clone-openai-pytorch-thor
     environment:
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"

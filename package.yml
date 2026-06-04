@@ -1,0 +1,13 @@
+package: cloud.lazycat.aipod.qwen3tts
+version: 0.2.5
+name: Qwen3 TTS
+description: qwen3 tts faster
+license: MIT
+homepage: https://github.com/woct0rdho/faster-qwen3-tts
+locales:
+  zh:
+    name: Qwen3 TTS
+    description: qwen3 tts faster
+  en:
+    name: Qwen3 TTS
+    description: qwen3 tts faster

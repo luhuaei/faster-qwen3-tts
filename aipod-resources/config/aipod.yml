@@ -1,0 +1,12 @@
+storage_alias: qwen3tts
+shortcut:
+  title: Qwen3 TTS
+locales:
+  zh:
+    title: Qwen3 TTS
+    name: Qwen3 TTS
+    description: qwen3 tts faster
+  en:
+    title: Qwen3 TTS
+    name: Qwen3 TTS
+    description: qwen3 tts faster

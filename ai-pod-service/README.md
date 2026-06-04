@@ -3,7 +3,7 @@
 This directory is the AI Pod service payload for the Orin deployment of
 `faster-qwen3-tts`.
 
-The service exposes an OpenAI-compatible TTS server on `qwen3-tts-ai` and
+The service exposes an OpenAI-compatible TTS server on `qwen3tts-ai` and
 waits for the startup warmup to finish before the container becomes healthy.
 
 API 文档：

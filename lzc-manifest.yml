@@ -1,0 +1,3 @@
+package: cloud.lazycat.aipod.qwen3tts
+application:
+  subdomain: qwen3-tts-ai
