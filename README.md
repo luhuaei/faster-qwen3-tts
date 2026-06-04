@@ -169,6 +169,109 @@ curl http://localhost:8000/v1/audio/speech \
     --output speech.wav
 ```
 
+### Jetson Docker builds
+
+Use [`scripts/build_jetson_image.py`](scripts/build_jetson_image.py) to build
+the OpenAI-compatible server image on a remote Jetson Docker daemon through
+Docker's `ssh://` transport. The script creates a temporary build context,
+copies this repo plus the local model directory into it, and leaves the tagged
+image on the remote Docker host.
+
+Prerequisites:
+
+- `uv` on the local build machine.
+- `docker --host ssh://...` access to the target Jetson.
+- A local model directory, for example `Qwen/Qwen3-TTS-12Hz-0.6B-Base`.
+
+Orin default target:
+
+```bash
+uv run scripts/build_jetson_image.py \
+  --target orin \
+  --model-dir Qwen/Qwen3-TTS-12Hz-0.6B-Base \
+  --image faster-qwen3-tts \
+  --tag 0.6b-base-clone-openai-orin \
+  --mode clone \
+  --default-voice vivian
+```
+
+The Orin preset uses:
+
+- SSH target: `nvidia@lzc-pod-juyIZt.lan`
+- Dockerfile: `faster-qwen3-tts-jetson.Dockerfile`
+- base image: `127.0.0.1:5001/x/lzc-aipod-vllm:bffa39b-orin`
+- pip index: `https://pypi.jetson-ai-lab.io/jp6/cu126/+simple`
+- torchaudio: `torchaudio==2.10.0`
+
+Thor default target:
+
+```bash
+uv run scripts/build_jetson_image.py \
+  --target thor \
+  --model-dir Qwen/Qwen3-TTS-12Hz-0.6B-Base \
+  --image faster-qwen3-tts \
+  --tag 0.6b-base-clone-openai-pytorch-thor \
+  --mode clone \
+  --default-voice vivian
+```
+
+The Thor preset uses:
+
+- SSH target: `nvidia@tegra-ubuntu-t5000.lan`
+- Dockerfile: `faster-qwen3-tts-jetson-thor.Dockerfile`
+- base image: `nvcr.io/nvidia/pytorch:25.08-py3`
+- pip index: `https://pypi.jetson-ai-lab.io/sbsa/cu130/+simple`
+- torchaudio: `torchaudio==2.8.0`
+
+The Thor Dockerfile intentionally reuses the NGC PyTorch already in the base
+image. It installs torch-sensitive packages with `--no-deps` and fails the build
+if torch is no longer the NGC `2.8.0a0...nv25.08` build.
+
+Convenience wrappers are also available:
+
+```bash
+uv run scripts/build_orin_image.py \
+  --model-dir Qwen/Qwen3-TTS-12Hz-0.6B-Base \
+  --tag 0.6b-base-clone-openai-orin
+
+uv run scripts/build_thor_image.py \
+  --model-dir Qwen/Qwen3-TTS-12Hz-0.6B-Base \
+  --tag 0.6b-base-clone-openai-pytorch-thor
+```
+
+Useful overrides:
+
+```bash
+# Preview the remote docker build command without building.
+uv run scripts/build_jetson_image.py --target thor \
+  --model-dir Qwen/Qwen3-TTS-12Hz-0.6B-Base \
+  --tag 0.6b-base-clone-openai-pytorch-thor \
+  --dry-run
+
+# Override the host or any target preset value.
+uv run scripts/build_jetson_image.py --target thor \
+  --ssh nvidia@other-thor-host \
+  --model-dir Qwen/Qwen3-TTS-12Hz-0.6B-Base \
+  --base-image nvcr.io/nvidia/pytorch:25.08-py3
+```
+
+After building, check size and run the OpenAI server smoke test:
+
+```bash
+docker --host ssh://nvidia@tegra-ubuntu-t5000.lan image ls \
+  faster-qwen3-tts:0.6b-base-clone-openai-pytorch-thor
+
+docker --host ssh://nvidia@tegra-ubuntu-t5000.lan history \
+  faster-qwen3-tts:0.6b-base-clone-openai-pytorch-thor
+
+uv run scripts/smoke_test_jetson_openai_server.py \
+  --target thor \
+  --ssh nvidia@tegra-ubuntu-t5000.lan \
+  --image faster-qwen3-tts:0.6b-base-clone-openai-pytorch-thor \
+  --port 18000 \
+  --ref-audio ref_audio.wav
+```
+
 ## Results
 
 Benchmarks include tokenization + inference (apples-to-apples with baseline). RTF > 1.0 = faster than real-time. TTFA measured as time to first playable audio chunk using streaming (chunk_size=8).

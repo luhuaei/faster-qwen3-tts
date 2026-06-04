@@ -12,7 +12,7 @@ API 文档：
 
 Image tag:
 
-- `lzcbox-90fc188b.lan:5001/x/faster-qwen3-tts:0.6b-base-clone-openai-orin-v5`
+- Built image tags are generated as `faster-qwen3-tts:<git-abbr>` by default.
 
 Key runtime defaults:
 
@@ -23,14 +23,19 @@ Key runtime defaults:
 - default voice: `vivian`
 - chunk size: `8`
 
-The image can be rebuilt and pushed from this repo with:
+The image can be rebuilt on a Jetson Docker daemon from this repo with:
 
 ```bash
-python3 scripts/build_orin_aipod_image.py
+uv run scripts/build_jetson_image.py \
+  --target orin \
+  --model-dir /path/to/Qwen3-TTS-12Hz-0.6B-Base \
+  --tag-prefix 0.6b-base-clone-openai-orin
 ```
 
-If the target registry is temporarily unreachable from the Orin host, build only:
+Use `--ssh nvidia@host` or `--docker-host ssh://nvidia@host` to override the
+target preset. The image is built and left on the remote Docker daemon; this
+script does not push to a registry.
 
 ```bash
-ORIN_AIPOD_PUSH=0 python3 scripts/build_orin_aipod_image.py
+docker --host ssh://nvidia@lzc-pod-juyIZt.lan version
 ```
